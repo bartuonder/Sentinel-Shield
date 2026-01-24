@@ -3,6 +3,7 @@ from app.core.config import settings
 from app.core.database import engine, Base
 from app.models import user
 from app.api.v1.endpoints import auth
+from app.core.middleware import SecurityMiddleware
 
 Base.metadata.create_all(bind=engine)
 
@@ -11,6 +12,8 @@ app = FastAPI(
     version=settings.VERSION,
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
+
+app.add_middleware(SecurityMiddleware)
 
 app.include_router(auth.router, prefix="/api/v1", tags=["auth"])
 
