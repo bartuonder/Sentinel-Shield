@@ -1,3 +1,4 @@
+import secrets
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,13 +27,16 @@ async def create_user(
             detail="Bu email adresi zaten kullanımda."
         )
 
+    generated_api_key = f"sk_live_{secrets.token_urlsafe(32)}"
+
     hashed_password = get_password_hash(user_in.password)
 
     new_user = User(
         email=user_in.email,
         hashed_password=hashed_password,
         full_name=user_in.full_name,
-        is_active=True
+        is_active=True,
+        api_key=generated_api_key
     )
 
     db.add(new_user)

@@ -12,3 +12,4 @@ env/
 sentinel.db
 .DS_Store
 Thumbs.db
+client.py

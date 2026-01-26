@@ -15,6 +15,7 @@ class UserLogin(BaseModel):
 class UserResponse(UserBase):
     id: int
     is_active: bool
+    api_key: Optional[str] = None
 
     class Config:
         from_attributes = True

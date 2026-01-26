@@ -3,12 +3,13 @@ from app.security.base import BaseScanner, SecurityResult, ScanStatus
 from app.security.pii_scanner import PIIScanner
 from app.security.injection_scanner import InjectionScanner
 from app.security.llm_scanner import LLMGuardScanner
-
+from app.security.input_validator import InputValidator
 
 class SecurityPipeline:
     def __init__(self):
 
         self.scanners: List[BaseScanner] = [
+            InputValidator(),
             PIIScanner(),
             InjectionScanner(),
             LLMGuardScanner()
