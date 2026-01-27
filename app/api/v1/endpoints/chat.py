@@ -2,16 +2,21 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.schemas.ai import AnalyzeRequest, AnalyzeResponse
-from app.security.manager import SecurityPipeline
+from app.security.manager import SecurityPipeline, handle_violation
 from app.security.base import ScanStatus
 from app.services.logger import log_security_event
-from app.core.security import get_current_user
 from app.models.user import User
+from app.core.redis_client import redis_client
 
 router = APIRouter()
 
 def get_security_pipeline():
     return SecurityPipeline()
+
+def get_authenticated_user(request: Request):
+    if not hasattr(request.state, "user") or request.state.user is None:
+        raise HTTPException(status_code=401, detail="Authentication required (API Key missing)")
+    return request.state.user
 
 @router.post("/secure", response_model=AnalyzeResponse)
 async def secure_chat(
@@ -19,23 +24,44 @@ async def secure_chat(
         body: AnalyzeRequest,
         db: AsyncSession = Depends(get_db),
         pipeline: SecurityPipeline = Depends(get_security_pipeline),
-        current_user: User = Depends(get_current_user)
+        current_user: User = Depends(get_authenticated_user)
 ):
 
-    result = await pipeline.run(body.text)
-    client_ip = request.client.host
+    attacker_ip = body.user_ip
+    user_id = current_user.id
+    user_name = current_user.full_name
+
+    ban_key = f"banned:{user_id}:{attacker_ip}"
+    is_banned = await redis_client.get(ban_key)
+
+    if is_banned:
+
+        raise HTTPException(
+            status_code=403,
+            detail="ERİŞİM ENGELLENDİ: Bu IP adresi daha önceki saldırılar nedeniyle kalıcı olarak banlanmıştır."
+        )
+
+    result = await pipeline.run(body.text, user_id=user_id)
 
     await log_security_event(
         db=db,
-        ip=client_ip,
+        ip=attacker_ip,
         endpoint="/api/v1/chat/secure",
         request_text=body.text,
         result=result,
-        user_id=current_user.id
+        user_id=user_id
     )
 
     if not result["allowed"]:
-        error_detail = "Security Policy Violation"
+
+        await handle_violation(
+            db=db,
+            user_id=user_id,
+            ip_address=attacker_ip,
+            reason=result.get("block_reason", "Security Violation")
+        )
+
+        error_detail = result.get("block_reason", "Security Policy Violation")
         status_code = 403
 
         if result["status"] == ScanStatus.ERROR:
@@ -50,5 +76,5 @@ async def secure_chat(
     return {
         "status": "Message Allowed",
         "processed_input": result["final_text"],
-        "system_response": f"Merhaba {current_user.full_name}, mesajınız temiz ve onaylandı."
+        "system_response": f"Merhaba {user_name}, mesajınız temiz."
     }

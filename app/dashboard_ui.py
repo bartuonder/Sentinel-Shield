@@ -6,7 +6,8 @@ import plotly.express as px
 API_BASE_URL = "http://127.0.0.1:8000/api/v1"
 
 st.set_page_config(
-    page_title="Sentinel Shield Panel",
+    page_title="Sentinel Shield SaaS",
+    page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -15,136 +16,152 @@ if 'auth_token' not in st.session_state:
     st.session_state.auth_token = None
 
 
-def login_screen():
-    st.header("Giriş Yap")
+def auth_screen():
+    st.title("🛡️ Sentinel Shield")
+    st.subheader("Güvenlik Duvarı Giriş")
+    tab1, tab2 = st.tabs(["Giriş Yap", "Kayıt Ol"])
 
-    with st.form("login_form"):
-        email = st.text_input("Email Adresi")
-        password = st.text_input("Şifre", type="password")
-        submit = st.form_submit_button("Giriş")
+    with tab1:
+        with st.form("login"):
+            email = st.text_input("Email")
+            password = st.text_input("Şifre", type="password")
+            if st.form_submit_button("Giriş Yap"):
+                try:
+                    res = requests.post(f"{API_BASE_URL}/auth/login", data={"username": email, "password": password})
+                    if res.status_code == 200:
+                        st.session_state.auth_token = res.json().get("access_token")
+                        st.rerun()
+                    else:
+                        st.error("Giriş başarısız.")
+                except:
+                    st.error("Sunucuya bağlanılamadı.")
 
-        if submit:
-            if not email or not password:
-                st.warning("Lütfen tüm alanları doldurun.")
-                return
-
-            try:
-                payload = {"username": email, "password": password}
-                response = requests.post(f"{API_BASE_URL}/auth/login", data=payload)
-
-                if response.status_code == 200:
-                    token_data = response.json()
-                    st.session_state.auth_token = token_data.get("access_token")
-                    st.rerun()
-                else:
-                    st.error("Giriş başarısız. Bilgilerinizi kontrol edin.")
-            except requests.exceptions.ConnectionError:
-                st.error("Sunucuya bağlanılamadı. Backend servisinin açık olduğundan emin olun.")
+    with tab2:
+        with st.form("signup"):
+            name = st.text_input("İsim")
+            email = st.text_input("Email")
+            password = st.text_input("Şifre", type="password")
+            if st.form_submit_button("Kayıt Ol"):
+                requests.post(f"{API_BASE_URL}/auth/signup",
+                              json={"email": email, "password": password, "full_name": name})
+                st.success("Kayıt olundu, giriş yapabilirsiniz.")
 
 
 def main_dashboard():
     headers = {"Authorization": f"Bearer {st.session_state.auth_token}"}
 
     try:
-        user_response = requests.get(f"{API_BASE_URL}/dashboard/me", headers=headers)
-        if user_response.status_code != 200:
-            st.session_state.auth_token = None
-            st.rerun()
-            return
-
-        user_data = user_response.json()
-
-        stats_response = requests.get(f"{API_BASE_URL}/dashboard/stats", headers=headers)
-        dashboard_stats = stats_response.json() if stats_response.status_code == 200 else {}
-
-    except Exception as e:
-        st.error(f"Veri çekme hatası: {str(e)}")
+        user = requests.get(f"{API_BASE_URL}/dashboard/me", headers=headers).json()
+        stats = requests.get(f"{API_BASE_URL}/dashboard/stats", headers=headers).json()
+    except:
+        st.session_state.auth_token = None
+        st.rerun()
         return
 
     with st.sidebar:
-        st.subheader("Profil Bilgileri")
-        st.write(f"**Kullanıcı:** {user_data.get('full_name')}")
-        st.write(f"**Email:** {user_data.get('email')}")
-
-        st.markdown("---")
+        st.title(user.get("full_name"))
         if st.button("Çıkış Yap"):
             st.session_state.auth_token = None
             st.rerun()
 
     st.title("Güvenlik Paneli")
+    st.info(f"🔑 API Key: `{user.get('api_key')}`")
+
+    c1, c2, c3, c4 = st.columns(4)
+    total = stats.get("total_requests", 0)
+    blocked = stats.get("blocked_attacks", 0)
+    banned = stats.get("global_banned_ips", 0)
+
+    c1.metric("Toplam Trafik", total)
+    c2.metric("Engellenen Saldırı", blocked, delta_color="inverse")
+    c3.metric("Banlanan IP", banned)
+
+    score = 100
+    if total > 0:
+        ratio = blocked / total
+        score = max(0, 100 - int(ratio * 100))
+    c4.metric("Güvenlik Skoru", f"%{score}")
+
     st.markdown("---")
 
-    st.subheader("Entegrasyon Anahtarı")
-    col_key, col_info = st.columns([3, 1])
-    with col_key:
-        st.code(user_data.get("api_key", "Mevcut Değil"), language="text")
-    with col_info:
-        st.info("Bu anahtarı header'da 'Authorization: Bearer <KEY>' formatında kullanın.")
+    tabs = st.tabs(["📊 Aktivite Logları", "🚫 Yasaklı IP'ler", "📈 Analiz Grafikleri"])
 
-    st.markdown("---")
+    # 1. LOGLAR
+    with tabs[0]:
+        try:
+            logs = requests.get(f"{API_BASE_URL}/dashboard/logs", headers=headers).json()
+            if logs:
+                df = pd.DataFrame(logs)
 
-    if dashboard_stats:
-        total = dashboard_stats.get("total_requests", 0)
-        blocked = dashboard_stats.get("blocked_attacks", 0)
-        banned_ips = dashboard_stats.get("global_banned_ips", 0)
+                # Status kontrolünü Frontend tarafında da sağlam yapalım
+                def get_status_label(row):
+                    if row.get('status') == 'BLOCKED' or not row.get('is_allowed'):
+                        return "🛡️ Engellendi"
+                    return "✅ Temiz"
 
-        security_score = 100
-        if total > 0:
-            ratio = blocked / total
-            security_score = max(0, 100 - int(ratio * 100))
+                df['durum'] = df.apply(get_status_label, axis=1)
 
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Toplam İstek", total)
-        m2.metric("Engellenen Tehdit", blocked)
-        m3.metric("Sistem Güvenlik Skoru", f"%{security_score}")
-        m4.metric("Kalıcı Banlanan IP", banned_ips)
-
-        st.markdown("### Analiz ve Loglar")
-
-        col_table, col_chart = st.columns([2, 1])
-
-        with col_table:
-            st.write("**Son Aktivite Kayıtları**")
-            try:
-                logs_response = requests.get(f"{API_BASE_URL}/dashboard/logs?limit=20", headers=headers)
-                if logs_response.status_code == 200:
-                    logs_data = logs_response.json()
-                    if logs_data:
-                        df = pd.DataFrame(logs_data)
-                        display_df = df[['timestamp', 'scanner_name', 'status', 'request_text']]
-                        st.dataframe(
-                            display_df,
-                            column_config={
-                                "timestamp": "Zaman",
-                                "scanner_name": "Tespit Modülü",
-                                "status": "Durum",
-                                "request_text": "İstek İçeriği"
-                            },
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                    else:
-                        st.info("Görüntülenecek kayıt bulunamadı.")
-            except:
-                st.error("Log verileri alınamadı.")
-
-        with col_chart:
-            st.write("**Engelleme Dağılımı**")
-            dist_data = dashboard_stats.get("attack_distribution", [])
-            if dist_data:
-                df_dist = pd.DataFrame(dist_data)
-                fig = px.pie(
-                    df_dist,
-                    values='value',
-                    names='name',
-                    color_discrete_sequence=px.colors.sequential.RdBu
+                # Tablo gösterimi (Warning fix: use_container_width yerine width parametresi kaldırıldı, default'a bırakıldı)
+                st.dataframe(
+                    df[['timestamp', 'ip_address', 'scanner_name', 'durum', 'request_text']],
+                    use_container_width=True
                 )
-                fig.update_layout(margin=dict(t=0, b=0, l=0, r=0))
-                st.plotly_chart(fig, use_container_width=True)
             else:
-                st.caption("Grafik oluşturmak için yeterli veri yok.")
+                st.info("Henüz log yok.")
+        except:
+            st.error("Loglar yüklenemedi.")
+
+    # 2. BANLAR
+    with tabs[1]:
+        try:
+            bans = requests.get(f"{API_BASE_URL}/dashboard/bans", headers=headers).json()
+            if bans:
+                st.dataframe(
+                    pd.DataFrame(bans)[['ip_address', 'reason', 'banned_at']],
+                    use_container_width=True
+                )
+            else:
+                st.success("Banlı IP yok.")
+        except:
+            st.error("Liste yüklenemedi.")
+
+    # 3. GRAFİKLER
+    with tabs[2]:
+        col_g1, col_g2 = st.columns(2)
+
+        with col_g1:
+            st.subheader("Trafik Analizi")
+            allowed_count = max(0, total - blocked)
+
+            # Veri varsa çiz, yoksa boş pasta
+            traffic_data = pd.DataFrame({
+                "Tip": ["Temiz Trafik", "Saldırı"],
+                "Miktar": [allowed_count, blocked]
+            })
+
+            # Eğer toplam 0 ise grafik çizme
+            if total > 0:
+                fig1 = px.pie(traffic_data, values="Miktar", names="Tip",
+                              color="Tip", color_discrete_map={"Temiz Trafik": "green", "Saldırı": "red"},
+                              hole=0.4)
+                st.plotly_chart(fig1, use_container_width=True)
+            else:
+                st.info("Veri yok.")
+
+        with col_g2:
+            st.subheader("Tehdit Dağılımı")
+            dist = stats.get("attack_distribution", [])
+            if dist:
+                df_dist = pd.DataFrame(dist)
+                fig2 = px.bar(df_dist, x="name", y="value",
+                              labels={"name": "Saldırı Modülü", "value": "Sayı"},
+                              color="value", title="Saldırı Tipleri")
+                st.plotly_chart(fig2, use_container_width=True)
+            else:
+                st.info("Henüz saldırı tespit edilmedi.")
+
 
 if st.session_state.auth_token:
     main_dashboard()
 else:
-    login_screen()
+    auth_screen()

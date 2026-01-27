@@ -2,6 +2,7 @@ from pydantic import BaseModel
 
 class AnalyzeRequest(BaseModel):
     text: str
+    user_ip: str
 
 class AnalyzeResponse(BaseModel):
     status: str
