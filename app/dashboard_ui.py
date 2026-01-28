@@ -18,9 +18,7 @@ if 'auth_token' not in st.session_state:
 
 def auth_screen():
     st.title("🛡️ Sentinel Shield")
-    st.subheader("Güvenlik Duvarı Giriş")
     tab1, tab2 = st.tabs(["Giriş Yap", "Kayıt Ol"])
-
     with tab1:
         with st.form("login"):
             email = st.text_input("Email")
@@ -86,22 +84,14 @@ def main_dashboard():
 
     tabs = st.tabs(["📊 Aktivite Logları", "🚫 Yasaklı IP'ler", "📈 Analiz Grafikleri"])
 
-    # 1. LOGLAR
     with tabs[0]:
         try:
             logs = requests.get(f"{API_BASE_URL}/dashboard/logs", headers=headers).json()
             if logs:
                 df = pd.DataFrame(logs)
 
-                # Status kontrolünü Frontend tarafında da sağlam yapalım
-                def get_status_label(row):
-                    if row.get('status') == 'BLOCKED' or not row.get('is_allowed'):
-                        return "🛡️ Engellendi"
-                    return "✅ Temiz"
+                df['durum'] = df['is_allowed'].apply(lambda x: "✅ Temiz" if x else "🛡️ Engellendi")
 
-                df['durum'] = df.apply(get_status_label, axis=1)
-
-                # Tablo gösterimi (Warning fix: use_container_width yerine width parametresi kaldırıldı, default'a bırakıldı)
                 st.dataframe(
                     df[['timestamp', 'ip_address', 'scanner_name', 'durum', 'request_text']],
                     use_container_width=True
@@ -111,35 +101,25 @@ def main_dashboard():
         except:
             st.error("Loglar yüklenemedi.")
 
-    # 2. BANLAR
     with tabs[1]:
         try:
             bans = requests.get(f"{API_BASE_URL}/dashboard/bans", headers=headers).json()
             if bans:
-                st.dataframe(
-                    pd.DataFrame(bans)[['ip_address', 'reason', 'banned_at']],
-                    use_container_width=True
-                )
+                st.dataframe(pd.DataFrame(bans)[['ip_address', 'reason', 'banned_at']], use_container_width=True)
             else:
                 st.success("Banlı IP yok.")
         except:
             st.error("Liste yüklenemedi.")
 
-    # 3. GRAFİKLER
     with tabs[2]:
         col_g1, col_g2 = st.columns(2)
-
         with col_g1:
             st.subheader("Trafik Analizi")
             allowed_count = max(0, total - blocked)
-
-            # Veri varsa çiz, yoksa boş pasta
             traffic_data = pd.DataFrame({
                 "Tip": ["Temiz Trafik", "Saldırı"],
                 "Miktar": [allowed_count, blocked]
             })
-
-            # Eğer toplam 0 ise grafik çizme
             if total > 0:
                 fig1 = px.pie(traffic_data, values="Miktar", names="Tip",
                               color="Tip", color_discrete_map={"Temiz Trafik": "green", "Saldırı": "red"},
