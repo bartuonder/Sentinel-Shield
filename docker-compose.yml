@@ -9,8 +9,8 @@ services:
       - .:/app
     ports:
       - "8000:8000"
-    environment:
-      - DATABASE_URL=sqlite+aiosqlite:///./sql_app.db
+    env_file:
+      - .env
     networks:
       - sentinel_net
 
