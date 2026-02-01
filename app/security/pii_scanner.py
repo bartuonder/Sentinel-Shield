@@ -135,7 +135,12 @@ class PIIScanner(BaseScanner):
 
     async def scan(self, text: str) -> SecurityResult:
         if not self.active:
-            return SecurityResult(ScanStatus.MONITOR, "PIIScanner", "Service Down", text)
+            return SecurityResult(
+                status=ScanStatus.MONITOR,
+                scanner_name="PIIScanner",
+                message="Service Down",
+                sanitized_text=text
+            )
 
         clean_text = self.clean_invisible_chars(text)
 
@@ -143,10 +148,10 @@ class PIIScanner(BaseScanner):
         if encoded_risks:
 
             return SecurityResult(
-                ScanStatus.BLOCKED,
-                "PIIScanner",
-                f"Encoded PII Detected: {', '.join(encoded_risks)}",
-                text,
+                status=ScanStatus.BLOCKED,
+                scanner_name="PIIScanner",
+                message=f"Encoded PII Detected: {', '.join(encoded_risks)}",
+                sanitized_text=text,
                 metadata={"hidden_pii": True, "detected_types": encoded_risks}
             )
 
@@ -185,20 +190,25 @@ class PIIScanner(BaseScanner):
 
         if hidden_found:
             return SecurityResult(
-                ScanStatus.ALLOWED,
-                "PIIScanner",
-                f"Hidden PII Detected: {', '.join(detected_labels)}",
-                normalized_text,
+                status=ScanStatus.ALLOWED,
+                scanner_name="PIIScanner",
+                message=f"Hidden PII Detected: {', '.join(detected_labels)}",
+                sanitized_text=normalized_text,
                 metadata={"hidden_pii": True, "detected_types": list(detected_labels)}
             )
 
         if detected_labels:
             return SecurityResult(
-                ScanStatus.ALLOWED,
-                "PIIScanner",
-                f"PII Detected: {', '.join(detected_labels)}",
-                sanitized_original,
+                status=ScanStatus.ALLOWED,
+                scanner_name="PIIScanner",
+                message=f"PII Detected: {', '.join(detected_labels)}",
+                sanitized_text=sanitized_original,
                 metadata={"hidden_pii": False, "detected_types": list(detected_labels)}
             )
 
-        return SecurityResult(ScanStatus.ALLOWED, "PIIScanner", "Clean", text)
+        return SecurityResult(
+            status=ScanStatus.ALLOWED,
+            scanner_name="PIIScanner",
+            message="Clean",
+            sanitized_text=text
+        )

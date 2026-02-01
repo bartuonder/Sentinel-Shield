@@ -39,7 +39,13 @@ class LLMGuardScanner(BaseScanner):
 
     async def scan(self, text: str) -> SecurityResult:
         if not self.client:
-            return SecurityResult(ScanStatus.MONITOR, "LLMGuard", "Config Missing", text, {"risk_score": 1.0})
+            return SecurityResult(
+                status=ScanStatus.MONITOR,
+                scanner_name="LLMGuard",
+                message="Config Missing",
+                sanitized_text=text,
+                metadata={"risk_score": 1.0}
+            )
 
         safe_content = (
             "--- BEGIN UNTRUSTED CONTENT ---\n"
@@ -66,11 +72,11 @@ class LLMGuardScanner(BaseScanner):
                 reason = data.get("reason", "AI Analysis")
 
                 return SecurityResult(
-                    ScanStatus.MONITOR,
-                    "LLMGuard",
-                    reason,
-                    text,
-                    {"risk_score": risk_score}
+                    status=ScanStatus.MONITOR,
+                    scanner_name="LLMGuard",
+                    message=reason,
+                    sanitized_text=text,
+                    metadata={"risk_score": risk_score}
                 )
 
             except json.JSONDecodeError:
@@ -80,6 +86,18 @@ class LLMGuardScanner(BaseScanner):
                 break
 
         if self.FAIL_OPEN:
-            return SecurityResult(ScanStatus.MONITOR, "LLMGuard", "Service Down (Open)", text, {"risk_score": 0.0})
+            return SecurityResult(
+                status=ScanStatus.MONITOR,
+                scanner_name="LLMGuard",
+                message="Service Down (Open)",
+                sanitized_text=text,
+                metadata={"risk_score": 0.0}
+            )
 
-        return SecurityResult(ScanStatus.ERROR, "LLMGuard", "Service Unavailable", text, {"risk_score": 1.0})
+        return SecurityResult(
+            status=ScanStatus.ERROR,
+            scanner_name="LLMGuard",
+            message="Service Unavailable",
+            sanitized_text=text,
+            metadata={"risk_score": 1.0}
+        )

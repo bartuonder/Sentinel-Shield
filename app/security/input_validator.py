@@ -44,7 +44,12 @@ class InputValidator(BaseScanner):
 
     async def scan(self, text: str) -> SecurityResult:
         if not text or not text.strip():
-            return SecurityResult(ScanStatus.BLOCKED, "InputValidator", "Empty input", text)
+            return SecurityResult(
+                status=ScanStatus.BLOCKED,
+                scanner_name="InputValidator",
+                message="Empty input",
+                sanitized_text=text
+            )
 
         if self.invisible_chars.search(text):
 
@@ -54,25 +59,54 @@ class InputValidator(BaseScanner):
         normalized = re.sub(r'\s+', ' ', normalized).strip()
 
         if self.check_script_mixing(text):
-            return SecurityResult(ScanStatus.BLOCKED, "InputValidator", "Homograph Attack Detected (Script Mixing)",
-                                  text)
+            return SecurityResult(
+                status=ScanStatus.BLOCKED,
+                scanner_name="InputValidator",
+                message="Homograph Attack Detected (Script Mixing)",
+                sanitized_text=text
+            )
 
         if self.blocklist_patterns.search(normalized):
-            return SecurityResult(ScanStatus.BLOCKED, "InputValidator", "Basic Jailbreak Attempt", text)
+            return SecurityResult(
+                status=ScanStatus.BLOCKED,
+                scanner_name="InputValidator",
+                message="Basic Jailbreak Attempt",
+                sanitized_text=text
+            )
 
         if len(normalized) > self.MAX_LEN:
-            return SecurityResult(ScanStatus.BLOCKED, "InputValidator", "Input too long", normalized[:50])
+            return SecurityResult(
+                status=ScanStatus.BLOCKED,
+                scanner_name="InputValidator",
+                message="Input too long",
+                sanitized_text=normalized[:50]
+            )
 
         if len(normalized) > 50:
             unique_chars = len(set(normalized))
             ratio = unique_chars / len(normalized)
             if ratio < 0.05:
-                return SecurityResult(ScanStatus.BLOCKED, "InputValidator", "Low entropy (Flood)", normalized[:50])
+                return SecurityResult(
+                    status=ScanStatus.BLOCKED,
+                    scanner_name="InputValidator",
+                    message="Low entropy (Flood)",
+                    sanitized_text=normalized[:50]
+                )
 
         word_count = len(normalized.split())
         if word_count > 0:
             avg_word_len = len(normalized) / word_count
             if avg_word_len > 25:
-                return SecurityResult(ScanStatus.BLOCKED, "InputValidator", "Token flood", normalized[:50])
+                return SecurityResult(
+                    status=ScanStatus.BLOCKED,
+                    scanner_name="InputValidator",
+                    message="Token flood",
+                    sanitized_text=normalized[:50]
+                )
 
-        return SecurityResult(ScanStatus.ALLOWED, "InputValidator", "Valid", normalized)
+        return SecurityResult(
+            status=ScanStatus.ALLOWED,
+            scanner_name="InputValidator",
+            message="Valid",
+            sanitized_text=normalized
+        )

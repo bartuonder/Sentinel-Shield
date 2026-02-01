@@ -119,20 +119,20 @@ class InjectionScanner(BaseScanner):
         encoded_attacks = self.decode_and_check(scan_text)
         if encoded_attacks:
             return SecurityResult(
-                ScanStatus.BLOCKED,
-                "InjectionScanner",
-                "Critical Encoded Attack Detected",
-                text,
-                {"risk_score": 1.0, "type": "ENCODED_INJECTION"}
+                status=ScanStatus.BLOCKED,
+                scanner_name="InjectionScanner",
+                message="Critical Encoded Attack Detected",
+                sanitized_text=text,
+                metadata={"risk_score": 1.0, "type": "ENCODED_INJECTION"}
             )
 
         if self.hard_signatures.search(scan_text):
             return SecurityResult(
-                ScanStatus.BLOCKED,
-                "InjectionScanner",
-                "Critical Attack Signature Detected",
-                text,
-                {"risk_score": 1.0, "type": "HARD_SIGNATURE"}
+                status=ScanStatus.BLOCKED,
+                scanner_name="InjectionScanner",
+                message="Critical Attack Signature Detected",
+                sanitized_text=text,
+                metadata={"risk_score": 1.0, "type": "HARD_SIGNATURE"}
             )
 
         heuristic_score = self.calculate_heuristic_score(scan_text)
@@ -156,11 +156,16 @@ class InjectionScanner(BaseScanner):
         if risks:
             status = ScanStatus.BLOCKED if final_score >= 0.8 else ScanStatus.MONITOR
             return SecurityResult(
-                status,
-                "InjectionScanner",
-                f"Heuristic Risk: {', '.join(risks)}",
-                text,
-                {"risk_score": final_score, "flags": risks}
+                status=status,
+                scanner_name="InjectionScanner",
+                message=f"Heuristic Risk: {', '.join(risks)}",
+                sanitized_text=text,
+                metadata={"risk_score": final_score, "flags": risks}
             )
 
-        return SecurityResult(ScanStatus.ALLOWED, "InjectionScanner", "Clean", text)
+        return SecurityResult(
+            status=ScanStatus.ALLOWED,
+            scanner_name="InjectionScanner",
+            message="Clean",
+            sanitized_text=text
+        )
