@@ -1,80 +1,68 @@
-import re
+import logging
 from app.security.base import BaseScanner, SecurityResult, ScanStatus
+from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+from presidio_anonymizer.entities import OperatorConfig
 
 class PIIScanner(BaseScanner):
     def __init__(self):
+        self.analyzer = AnalyzerEngine()
+        self.anonymizer = AnonymizerEngine()
 
-        self.patterns = {
-            "EMAIL": r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
-
-            "PHONE_TR": r"(?:\+90|0)?5\d{2}[-.\s]?\d{3}(?:[-.\s]?\d{4}|[-.\s]?\d{2}[-.\s]?\d{2})",
-
-            "CREDIT_CARD_CANDIDATE": r"\b(?:\d[ -]*?){13,16}\b",
-
-            "TCKN_CANDIDATE": r"\b[1-9]\d{10}\b"
-        }
-
-    def _verify_luhn(self, cc_number: str) -> bool:
-
-        digits = [int(d) for d in cc_number if d.isdigit()]
-        checksum = 0
-        reverse_digits = digits[::-1]
-        for i, digit in enumerate(reverse_digits):
-            if i % 2 == 1:
-                doubled = digit * 2
-                checksum += doubled - 9 if doubled > 9 else doubled
-            else:
-                checksum += digit
-        return checksum % 10 == 0
-
-    def _verify_tckn(self, tckn: str) -> bool:
-
-        if len(tckn) != 11 or tckn.startswith('0'): return False
-
-        try:
-            digits = [int(d) for d in tckn]
-        except ValueError:
-            return False
-        d = digits
-
-        c1 = (sum(d[0:10:2]) * 7 - sum(d[1:9:2])) % 10
-
-        c2 = sum(d[:10]) % 10
-
-        return c1 == d[9] and c2 == d[10]
+        self.entities_to_detect = [
+            "PHONE_NUMBER",
+            "EMAIL_ADDRESS",
+            "CREDIT_CARD",
+            "CRYPTO",
+            "IP_ADDRESS",
+            "US_SSN",
+            "PERSON",
+            "LOCATION"
+        ]
 
     async def scan(self, text: str) -> SecurityResult:
-        processed_text = text
-        found_pii = []
+        try:
 
-        if re.search(self.patterns["EMAIL"], processed_text):
-            processed_text = re.sub(self.patterns["EMAIL"], "[EMAIL REDACTED]", processed_text)
-            found_pii.append("EMAIL")
+            results = self.analyzer.analyze(
+                text=text,
+                entities=self.entities_to_detect,
+                language='en'
+            )
 
-        phone_matches = list(re.finditer(self.patterns["PHONE_TR"], processed_text))
-        if phone_matches:
-            found_pii.append("PHONE")
-            for match in phone_matches:
+            found_types = list(set([res.entity_type for res in results]))
 
-                processed_text = processed_text.replace(match.group(), "[PHONE REDACTED]")
+            if not results:
+                return SecurityResult(
+                    status=ScanStatus.ALLOWED,
+                    scanner_name="PIIScanner (Presidio AI)",
+                    message="No PII detected",
+                    sanitized_text=text
+                )
 
-        for match in re.finditer(self.patterns["CREDIT_CARD_CANDIDATE"], text):
-            candidate = match.group()
-            clean_num = re.sub(r"\D", "", candidate)
-            if len(clean_num) > 12 and self._verify_luhn(clean_num):
-                found_pii.append("CREDIT_CARD")
-                processed_text = processed_text.replace(candidate, "[CREDIT_CARD REDACTED]")
+            anonymized_result = self.anonymizer.anonymize(
+                text=text,
+                analyzer_results=results,
+                operators={
+                    "DEFAULT": OperatorConfig("replace", {"new_value": "<REDACTED>"}),
+                    "PHONE_NUMBER": OperatorConfig("replace", {"new_value": "[PHONE HIDDEN]"}),
+                    "CREDIT_CARD": OperatorConfig("replace", {"new_value": "[CC HIDDEN]"})
+                }
+            )
 
-        for match in re.finditer(self.patterns["TCKN_CANDIDATE"], text):
-            candidate = match.group()
-            if self._verify_tckn(candidate):
-                found_pii.append("TCKN")
-                processed_text = processed_text.replace(candidate, "[TCKN REDACTED]")
+            return SecurityResult(
+                status=ScanStatus.ALLOWED,
+                scanner_name="PIIScanner (Presidio AI)",
+                message=f"PII Detected & Masked: {', '.join(found_types)}",
+                sanitized_text=anonymized_result.text,
+                metadata={"found_entities": found_types}
+            )
 
-        return SecurityResult(
-            status=ScanStatus.ALLOWED,
-            scanner_name="PIIScanner",
-            message=f"PII Masked: {', '.join(set(found_pii))}" if found_pii else "Clean",
-            sanitized_text=processed_text,
-            metadata={"found_types": list(set(found_pii))}
-        )
+        except Exception as e:
+            print(f"Presidio Error: {e}")
+
+            return SecurityResult(
+                status=ScanStatus.ERROR,
+                scanner_name="PIIScanner",
+                message="PII Scan Error",
+                sanitized_text=text
+            )
