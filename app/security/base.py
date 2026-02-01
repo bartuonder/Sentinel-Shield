@@ -11,7 +11,6 @@ class ScanStatus(str, Enum):
     MONITOR = "MONITOR"
 
 class SecurityResult(BaseModel):
-
     status: ScanStatus
     scanner_name: str
     message: str
@@ -19,7 +18,6 @@ class SecurityResult(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class BaseScanner(ABC):
-
     @abstractmethod
     async def scan(self, text: str) -> SecurityResult:
         pass
