@@ -17,7 +17,6 @@ MAX_CONTEXT_LEN = 1000
 MAX_HASH_LEN = 2000
 LLM_TIMEOUT = 4.0
 
-
 class SecurityPipeline:
     def __init__(self):
         self.validator = InputValidator()
@@ -58,7 +57,6 @@ class SecurityPipeline:
         return current_text
 
     async def run(self, text: str, user_id: int, ip: str, db: AsyncSession):
-
         if await redis_client.get(f"banned:user:{user_id}") or await redis_client.get(f"banned:ip:{ip}"):
             return {"allowed": False, "status": "BANNED"}
 
@@ -140,7 +138,25 @@ class SecurityPipeline:
         }
 
     async def _block(self, res, trace, uid, ip, db):
-        from app.services.firewall import handle_violation
         sev = int(res.metadata.get("risk_score", 0) * 10) or 3
         await handle_violation(db, uid, ip, res.message, sev)
         return {"allowed": False, "status": "BLOCKED", "block_reason": res.message, "trace": trace}
+
+async def handle_violation(db: AsyncSession, user_id: int, ip: str, reason: str, severity: int):
+    try:
+        user_key = f"violation:user:{user_id}"
+        ip_key = f"violation:ip:{ip}"
+
+        u_score = await redis_client.incrby(user_key, severity)
+        await redis_client.incrby(ip_key, severity)
+
+        await redis_client.expire(user_key, 3600)
+        await redis_client.expire(ip_key, 3600)
+
+        if u_score >= 50:
+            logger.warning(f"USER BANNED: {user_id}")
+            await redis_client.set(f"banned:user:{user_id}", "1", ex=1800)
+
+        logger.info(f"Violation: User={user_id} Sev={severity} Reason={reason}")
+    except Exception as e:
+        logger.error(f"Firewall Error: {e}")

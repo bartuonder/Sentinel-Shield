@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.schemas.ai import AnalyzeRequest, AnalyzeResponse
-from app.security.manager import SecurityPipeline, handle_violation
+from app.security.manager import SecurityPipeline
 from app.security.base import ScanStatus
 from app.services.logger import log_security_event
 from app.models.user import User
@@ -35,13 +35,12 @@ async def secure_chat(
     is_banned = await redis_client.get(ban_key)
 
     if is_banned:
-
         raise HTTPException(
             status_code=403,
             detail="ERİŞİM ENGELLENDİ: Bu IP adresi daha önceki saldırılar nedeniyle kalıcı olarak banlanmıştır."
         )
 
-    result = await pipeline.run(body.text, user_id=user_id)
+    result = await pipeline.run(body.text, user_id=user_id, ip=attacker_ip, db=db)
 
     await log_security_event(
         db=db,
@@ -53,13 +52,6 @@ async def secure_chat(
     )
 
     if not result["allowed"]:
-
-        await handle_violation(
-            db=db,
-            user_id=user_id,
-            ip_address=attacker_ip,
-            reason=result.get("block_reason", "Security Violation")
-        )
 
         error_detail = result.get("block_reason", "Security Policy Violation")
         status_code = 403
