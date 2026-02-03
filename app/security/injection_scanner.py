@@ -8,7 +8,6 @@ from app.security.base import BaseScanner, SecurityResult, ScanStatus
 
 class InjectionScanner(BaseScanner):
     def __init__(self):
-
         self.hard_signatures = re.compile(
             r"(?:\b(exec\s+xp_|benchmark\(|sleep\(|load_file\()|"
             r"(\b(union\s+all\s+select|union\s+select|information_schema)\b)|"
@@ -19,17 +18,13 @@ class InjectionScanner(BaseScanner):
         )
 
         self.manipulation_keywords = {
-
             "ignore": 0.3, "previous": 0.2, "instruction": 0.2, "limit": 0.2,
             "override": 0.5, "system": 0.2, "developer": 0.3, "mode": 0.2,
-
             "act as": 0.4, "simulate": 0.4, "roleplay": 0.4, "jailbreak": 0.6,
             "never": 0.2, "refuse": 0.2, "bypass": 0.5, "dan mode": 0.6,
             "hypothetical": 0.3, "fictional": 0.3, "character": 0.2,
-
             "unut": 0.3, "yoksay": 0.3, "önceki": 0.2, "talimat": 0.2,
             "sistem": 0.2, "kurallar": 0.2, "devre dışı": 0.4, "mod": 0.2,
-
             "davran": 0.3, "rol yap": 0.4, "sadece": 0.1, "motor": 0.1,
             "asla": 0.2, "yapay zeka": 0.1, "filtre": 0.3, "sanal": 0.2,
             "kurgusal": 0.3, "senaryo": 0.2, "karakter": 0.2
@@ -43,6 +38,7 @@ class InjectionScanner(BaseScanner):
 
         self.skeleton_keywords = ["unionselect", "insertinto", "droptable", "scriptalert", "xp_cmdshell", "or1=1",
                                   "or1like1"]
+
         self.leetspeak_map = str.maketrans(
             {'1': 'i', '0': 'o', '5': 's', '7': 't', '3': 'e', '4': 'a', '@': 'a', '$': 's'})
 
@@ -52,24 +48,18 @@ class InjectionScanner(BaseScanner):
         return self.invisible_chars.sub('', text)
 
     def sanitize_payload(self, text: str) -> str:
-
         text = urllib.parse.unquote(text)
-
         text = self.clean_invisible_chars(text)
-
         text = unicodedata.normalize('NFKC', text).casefold()
-
         text_clean = re.sub(r'/\*.*?\*/', '', text)
         return text_clean
 
     def decode_and_check(self, text: str) -> list:
-
         detected_attacks = []
         potential_payloads = re.findall(r'[A-Za-z0-9+/=]{10,}', text)
 
         for payload in potential_payloads:
             decoded_text = None
-
             try:
                 missing_padding = len(payload) % 4
                 if missing_padding: payload += '=' * (4 - missing_padding)
@@ -84,7 +74,6 @@ class InjectionScanner(BaseScanner):
                     pass
 
             if decoded_text:
-
                 clean_decoded = self.sanitize_payload(decoded_text)
                 if self.hard_signatures.search(clean_decoded):
                     detected_attacks.append("ENCODED_PAYLOAD_DETECTED")
@@ -96,7 +85,6 @@ class InjectionScanner(BaseScanner):
         return re.sub(r'[^a-z]', '', text)
 
     def calculate_heuristic_score(self, text: str) -> float:
-
         score = 0.0
         text_nospace = text.replace(" ", "")
 
@@ -105,14 +93,12 @@ class InjectionScanner(BaseScanner):
                 score += weight
 
         for kw, weight in self.soft_sql_keywords.items():
-
             if kw in text:
                 score += weight
 
         return score
 
     async def scan(self, text: str) -> SecurityResult:
-
         scan_text = self.sanitize_payload(text)
         risks = []
 

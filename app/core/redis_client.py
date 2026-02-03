@@ -11,10 +11,7 @@ if not REDIS_URL:
     redis_client = None
 
 else:
-    print(f"Redis Ayarları Yüklendi: {REDIS_URL[:15]}...")
-
     try:
-
         redis_client = redis.from_url(
             REDIS_URL,
             encoding="utf-8",
@@ -24,13 +21,11 @@ else:
             socket_connect_timeout=5,
             health_check_interval=30
         )
-
         print("Redis İstemcisi Başlatıldı (Async Mode).")
 
     except Exception as e:
         print(f"Redis Başlatma Hatası: {e}")
         redis_client = None
-
 
 def get_redis_client():
     return redis_client
