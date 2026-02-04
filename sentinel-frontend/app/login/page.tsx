@@ -16,10 +16,32 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // --- DÜZELTME: Email Format Kontrolü ---
+  const validateEmail = (email: string) => {
+    return String(email)
+      .toLowerCase()
+      .match(
+        /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|.(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/
+      );
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+
+    // --- DÜZELTME: Client-Side Validation ---
+    if (!validateEmail(email)) {
+        setError('Lütfen geçerli bir e-posta adresi giriniz.');
+        setLoading(false);
+        return;
+    }
+
+    if (password.length < 4) {
+        setError('Şifre en az 4 karakter olmalıdır.');
+        setLoading(false);
+        return;
+    }
 
     try {
       if (isLogin) {
@@ -28,14 +50,22 @@ export default function LoginPage() {
         formData.append('username', email);
         formData.append('password', password);
 
-        const res = await api.post('/auth/login', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-        });
+        // --- DÜZELTME: 401 Hatasını Yakalama ---
+        try {
+            const res = await api.post('/auth/login', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            localStorage.setItem('token', res.data.access_token);
+            router.push('/dashboard');
+        } catch (authError: any) {
+            if (authError.response?.status === 401) {
+                throw new Error("E-posta veya şifre hatalı!");
+            }
+            throw authError; // Diğer hataları dışarı fırlat
+        }
 
-        localStorage.setItem('token', res.data.access_token);
-        router.push('/dashboard');
       } else {
-
+        // Kayıt Olma İşlemi
         await api.post('/auth/signup', {
             email: email,
             password: password,
@@ -46,7 +76,9 @@ export default function LoginPage() {
       }
     } catch (err: any) {
       console.error(err);
-      setError(err.response?.data?.detail || 'Sunucuya bağlanılamadı.');
+      // Hata mesajını düzgün göster
+      const msg = err.message || err.response?.data?.detail || 'Sunucu hatası oluştu.';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -110,7 +142,7 @@ export default function LoginPage() {
           </div>
 
           {error && (
-            <div className="flex items-center gap-2 rounded-md bg-red-950/50 p-3 text-sm text-red-400 border border-red-900/50">
+            <div className="flex items-center gap-2 rounded-md bg-red-950/50 p-3 text-sm text-red-400 border border-red-900/50 animate-bounce">
               <AlertCircle size={16} />
               {error}
             </div>

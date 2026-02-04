@@ -34,7 +34,7 @@ export default function DashboardPage() {
       setLogs(logsRes.data);
       setBans(bansRes.data);
     } catch (error) {
-      console.error("Veri çekme hatası:", error);
+      console.error("Dashboard veri hatası (Kullanıcı görmemeli)", error);
     }
   };
 
@@ -55,11 +55,46 @@ export default function DashboardPage() {
   };
 
   const copyApiKey = () => {
-    if (user?.api_key) {
-      navigator.clipboard.writeText(user.api_key);
+    if (!user?.api_key) return;
+
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(user.api_key)
+        .then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        })
+        .catch(() => {
+
+          fallbackCopyTextToClipboard(user.api_key);
+        });
+    } else {
+
+      fallbackCopyTextToClipboard(user.api_key);
+    }
+  };
+
+  const fallbackCopyTextToClipboard = (text: string) => {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    textArea.style.top = "0";
+
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+
+    try {
+      document.execCommand('copy');
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Kopyalama başarısız', err);
+      alert('Kopyalanamadı, lütfen manuel seçiniz.');
     }
+
+    document.body.removeChild(textArea);
   };
 
   const calculateScore = () => {
@@ -100,7 +135,7 @@ export default function DashboardPage() {
         <div className="mt-8 pt-6 border-t border-gray-800">
           <div className="bg-gray-900/50 p-3 rounded-lg mb-4 border border-gray-800 flex items-center gap-3">
             <div className="h-8 w-8 rounded-full bg-red-900/30 flex items-center justify-center text-red-500 font-bold">
-                {user.full_name.charAt(0)}
+                {user.full_name?.charAt(0)}
             </div>
             <div className="overflow-hidden">
                 <div className="text-xs text-gray-500">Kullanıcı</div>
@@ -137,7 +172,7 @@ export default function DashboardPage() {
             <div className="flex-1">
               <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider">Secret API Key</div>
               <div className="font-mono text-sm text-white flex items-center gap-2">
-                {revealKey ? user.api_key : `${user.api_key.substring(0, 8)}••••••••••••••••`}
+                {revealKey ? user.api_key : `${user.api_key?.substring(0, 8)}••••••••••••••••`}
                 <button onClick={() => setRevealKey(!revealKey)} className="text-gray-500 hover:text-white ml-2">
                     <Eye size={14} />
                 </button>
