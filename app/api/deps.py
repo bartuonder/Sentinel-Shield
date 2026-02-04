@@ -3,11 +3,10 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select  # <-- Yeni Async sorgu fonksiyonu
-
+from sqlalchemy.future import select
 from app.core import security
-from app.core.database import AsyncSessionLocal # <-- Database.py'de tanımladığımız yeni sınıf
-from app.models.user import User  # <-- User modelini sorgulamak için lazım
+from app.core.database import AsyncSessionLocal
+from app.models.user import User
 from app.core.config import settings
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -38,7 +37,6 @@ async def get_current_user(
 
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalars().first()
-    # --------------------------------
 
     if user is None:
         raise credentials_exception
