@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -7,6 +7,8 @@ ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+RUN pip install spacy asyncpg presidio-analyzer presidio-anonymizer
 
 RUN python -m spacy download en_core_web_sm
 
