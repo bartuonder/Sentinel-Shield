@@ -3,6 +3,7 @@ import logging
 import asyncio
 import base64
 import re
+import hashlib
 import traceback
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -20,6 +21,7 @@ logger = logging.getLogger("Manager")
 MAX_CONTEXT_LEN = 1000
 LLM_TIMEOUT = 4.0
 BAN_THRESHOLD = 5
+CACHE_TTL = 86400
 
 
 class SecurityPipeline:
@@ -28,31 +30,38 @@ class SecurityPipeline:
         self.pii = PIIScanner()
         self.injection = InjectionScanner()
         self.llm = LLMGuardScanner()
-        self.PIPELINE_VERSION = "v6_STABLE"
+        self.PIPELINE_VERSION = "v12_FINAL"
         self.MODE = "strict"
-        self.BLOCK_ON_CRITICAL_PII = True
+        self.BLOCK_ON_CRITICAL_PII = False
+
+    def _generate_cache_key(self, text: str) -> str:
+        clean_text = text.strip().lower()
+        hash_object = hashlib.sha256(clean_text.encode())
+        return f"cache:response:{hash_object.hexdigest()}"
 
     async def check_rate_limits(self, user_id: int, ip: str) -> bool:
         if not redis_client: return True
         try:
             user_key = f"ratelimit:user:{user_id}"
-            ip_key = f"ratelimit:ip:{ip}"
+            ip_key = f"ratelimit:user:{user_id}:ip:{ip}"
+
             pipe = redis_client.pipeline()
             pipe.incr(user_key)
             pipe.expire(user_key, 60)
             pipe.incr(ip_key)
             pipe.expire(ip_key, 60)
             results = await pipe.execute()
+
             if results[0] > 1000: return False
             if results[2] > 100: return False
         except Exception:
             return True
         return True
 
-    async def get_combined_context(self, user_id: int, current_text: str) -> str:
+    async def get_combined_context(self, user_id: int, current_text: str, ip: str = "") -> str:
         if not redis_client: return current_text
         try:
-            context_key = f"context:last_msg:{user_id}"
+            context_key = f"context:last_msg:{user_id}:{ip}"
             last_msg = await redis_client.get(context_key)
             await redis_client.set(context_key, current_text[-MAX_CONTEXT_LEN:], ex=300)
             if last_msg:
@@ -97,26 +106,25 @@ class SecurityPipeline:
         trace = []
         try:
             if redis_client:
-                is_ip_banned = await redis_client.get(f"banned:ip:{ip}")
-                if is_ip_banned:
+                scoped_ban_key = f"banned:user:{user_id}:ip:{ip}"
+                if await redis_client.get(scoped_ban_key):
                     return {
                         "allowed": False,
                         "status": "BANNED",
-                        "block_reason": "IP Permanently Banned",
+                        "block_reason": "Access Denied: Your IP is banned for this API Key.",
                         "final_text": text,
                         "trace": []
                     }
 
-                if "." in ip and ":" not in ip:
-                    subnet = ".".join(ip.split(".")[:3])
-                    if await redis_client.get(f"banned:subnet:{subnet}"):
-                        return {
-                            "allowed": False,
-                            "status": "BANNED",
-                            "block_reason": "Subnet Banned",
-                            "final_text": text,
-                            "trace": []
-                        }
+                cache_key = self._generate_cache_key(text)
+                cached_response = await redis_client.get(cache_key)
+                if cached_response:
+                    return {
+                        "allowed": True,
+                        "status": "ALLOWED",
+                        "final_text": cached_response,
+                        "trace": [{"scanner": "Cache", "status": "HIT", "risk": 0.0}]
+                    }
 
             if not await self.check_rate_limits(user_id, ip):
                 return {
@@ -136,7 +144,8 @@ class SecurityPipeline:
                 return await self._finalize(res_val, trace, user_id, ip, db)
 
             clean_text = res_val.sanitized_text
-            combined_text = await self.get_combined_context(user_id, clean_text)
+
+            combined_text = await self.get_combined_context(user_id, clean_text, ip=ip)
 
             res_inj = await self.injection.scan(combined_text)
             trace.append(self._safe_log_dict(res_inj))
@@ -148,28 +157,16 @@ class SecurityPipeline:
             res_pii = await self.pii.scan(clean_text)
             trace.append(self._safe_log_dict(res_pii))
 
-            pii_meta = res_pii.metadata or {}
-            detected = pii_meta.get("detected_types", [])
-
-            if pii_meta.get("hidden_pii"):
-                return await self._finalize(res_pii, trace, user_id, ip, db)
-
-            criticals = ["TR_TCKN_HIDDEN", "HIDDEN_PII"]
-            if self.BLOCK_ON_CRITICAL_PII and any(d in criticals for d in detected):
-                res_pii.status = ScanStatus.BLOCKED
-                res_pii.message = "Sensitive Data Policy (Hidden)"
-                return await self._finalize(res_pii, trace, user_id, ip, db)
-
-            final_input_text = res_pii.sanitized_text
+            clean_text = res_pii.sanitized_text
 
             try:
-                res_llm = await asyncio.wait_for(self.llm.scan(final_input_text), timeout=LLM_TIMEOUT)
+                res_llm = await asyncio.wait_for(self.llm.scan(clean_text), timeout=LLM_TIMEOUT)
                 trace.append(self._safe_log_dict(res_llm))
 
                 if res_llm.status == ScanStatus.ERROR:
                     return {
                         "allowed": False, "status": "BLOCKED", "block_reason": "Security Check Failed (LLM Error)",
-                        "final_text": final_input_text, "trace": trace
+                        "final_text": clean_text, "trace": trace
                     }
 
                 llm_score = (res_llm.metadata or {}).get("risk_score", 0)
@@ -186,20 +183,23 @@ class SecurityPipeline:
             except asyncio.TimeoutError:
                 return {
                     "allowed": False, "status": "BLOCKED", "block_reason": "Security Check Timeout",
-                    "final_text": final_input_text, "trace": trace
+                    "final_text": clean_text, "trace": trace
                 }
             except Exception as e:
                 logger.error(f"LLM Scanner Error: {e}")
                 return {
                     "allowed": False, "status": "BLOCKED", "block_reason": "Security Module Error",
-                    "final_text": final_input_text, "trace": trace
+                    "final_text": clean_text, "trace": trace
                 }
+
+            if redis_client:
+                await redis_client.set(cache_key, clean_text, ex=CACHE_TTL)
 
             success_result = SecurityResult(
                 status=ScanStatus.ALLOWED,
                 scanner_name="System",
                 message="Clean",
-                sanitized_text=final_input_text
+                sanitized_text=clean_text
             )
             return await self._finalize(success_result, trace, user_id, ip, db)
 
@@ -264,16 +264,22 @@ class SecurityPipeline:
 async def handle_violation(db: AsyncSession, user_id: int, ip: str, reason: str, severity: int):
     if not redis_client: return
     try:
-        ip_key = f"violation:ip:{ip}"
-        ip_score = await redis_client.incrby(ip_key, severity)
-        await redis_client.expire(ip_key, 3600)
+        violation_key = f"violation:user:{user_id}:ip:{ip}"
+        ip_score = await redis_client.incrby(violation_key, severity)
+        await redis_client.expire(violation_key, 3600)
 
         if ip_score >= BAN_THRESHOLD:
-            logger.warning(f"IP BANNED: {ip}")
-            await redis_client.set(f"banned:ip:{ip}", "permanent")
+            logger.warning(f"IP BANNED for User {user_id}: {ip}")
+
+            ban_key = f"banned:user:{user_id}:ip:{ip}"
+            await redis_client.set(ban_key, "permanent")
 
             try:
-                existing = await db.execute(select(BlacklistedIP).where(BlacklistedIP.ip_address == ip))
+                stmt = select(BlacklistedIP).where(
+                    (BlacklistedIP.ip_address == ip) &
+                    (BlacklistedIP.user_id == user_id)
+                )
+                existing = await db.execute(stmt)
                 if not existing.scalars().first():
                     new_ban = BlacklistedIP(
                         user_id=user_id,
@@ -285,6 +291,6 @@ async def handle_violation(db: AsyncSession, user_id: int, ip: str, reason: str,
             except Exception as e:
                 logger.error(f"DB Ban Insert Error: {e}")
 
-        logger.info(f"Violation: IP={ip} Sev={severity} Reason={reason} Score={ip_score}")
+        logger.info(f"Violation: User={user_id} IP={ip} Sev={severity} Reason={reason} Score={ip_score}")
     except Exception as e:
         logger.error(f"Firewall Handle Violation Error: {e}")
