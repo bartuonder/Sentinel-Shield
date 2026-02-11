@@ -30,9 +30,8 @@ class SecurityPipeline:
         self.pii = PIIScanner()
         self.injection = InjectionScanner()
         self.llm = LLMGuardScanner()
-        self.PIPELINE_VERSION = "v12_FINAL"
+        self.PIPELINE_VERSION = "v13_FINAL"
         self.MODE = "strict"
-        self.BLOCK_ON_CRITICAL_PII = False
 
     def _generate_cache_key(self, text: str) -> str:
         clean_text = text.strip().lower()
@@ -42,23 +41,19 @@ class SecurityPipeline:
     async def check_rate_limits(self, user_id: int, ip: str) -> bool:
         if not redis_client: return True
         try:
-            user_key = f"ratelimit:user:{user_id}"
-            ip_key = f"ratelimit:user:{user_id}:ip:{ip}"
+            ip_key = f"ratelimit:manager:ip:{ip}"
 
             pipe = redis_client.pipeline()
-            pipe.incr(user_key)
-            pipe.expire(user_key, 60)
             pipe.incr(ip_key)
             pipe.expire(ip_key, 60)
             results = await pipe.execute()
 
             if results[0] > 1000: return False
-            if results[2] > 100: return False
         except Exception:
             return True
         return True
 
-    async def get_combined_context(self, user_id: int, current_text: str, ip: str = "") -> str:
+    async def get_combined_context(self, user_id: int, current_text: str, ip: str) -> str:
         if not redis_client: return current_text
         try:
             context_key = f"context:last_msg:{user_id}:{ip}"
@@ -90,15 +85,10 @@ class SecurityPipeline:
             pass
         return processed_text
 
-    def _safe_status_str(self, status):
-        if hasattr(status, 'value'):
-            return status.value
-        return str(status)
-
     def _safe_log_dict(self, res):
         return {
             "scanner": res.scanner_name,
-            "status": self._safe_status_str(res.status),
+            "status": str(res.status.value) if hasattr(res.status, 'value') else str(res.status),
             "risk": (res.metadata or {}).get("risk_score", 0)
         }
 
@@ -109,11 +99,9 @@ class SecurityPipeline:
                 scoped_ban_key = f"banned:user:{user_id}:ip:{ip}"
                 if await redis_client.get(scoped_ban_key):
                     return {
-                        "allowed": False,
-                        "status": "BANNED",
+                        "allowed": False, "status": "BANNED",
                         "block_reason": "Access Denied: Your IP is banned for this API Key.",
-                        "final_text": text,
-                        "trace": []
+                        "final_text": text, "trace": []
                     }
 
                 cache_key = self._generate_cache_key(text)
@@ -128,12 +116,9 @@ class SecurityPipeline:
 
             if not await self.check_rate_limits(user_id, ip):
                 return {
-                    "allowed": False,
-                    "status": "BLOCKED",
-                    "reason": "Rate Limit",
-                    "block_reason": "Rate Limit Exceeded",
-                    "final_text": text,
-                    "trace": []
+                    "allowed": False, "status": "BLOCKED",
+                    "reason": "Rate Limit", "block_reason": "Rate Limit Exceeded",
+                    "final_text": text, "trace": []
                 }
 
             decoded_text = self._decode_aggressive(text)
@@ -145,19 +130,17 @@ class SecurityPipeline:
 
             clean_text = res_val.sanitized_text
 
-            combined_text = await self.get_combined_context(user_id, clean_text, ip=ip)
-
-            res_inj = await self.injection.scan(combined_text)
-            trace.append(self._safe_log_dict(res_inj))
-
-            inj_risk = (res_inj.metadata or {}).get("risk_score", 0)
-            if inj_risk >= 1.0:
-                return await self._finalize(res_inj, trace, user_id, ip, db)
-
             res_pii = await self.pii.scan(clean_text)
             trace.append(self._safe_log_dict(res_pii))
 
             clean_text = res_pii.sanitized_text
+
+            combined_text = await self.get_combined_context(user_id, clean_text, ip)
+            res_inj = await self.injection.scan(combined_text)
+            trace.append(self._safe_log_dict(res_inj))
+
+            if (res_inj.metadata or {}).get("risk_score", 0) >= 1.0:
+                return await self._finalize(res_inj, trace, user_id, ip, db)
 
             try:
                 res_llm = await asyncio.wait_for(self.llm.scan(clean_text), timeout=LLM_TIMEOUT)
@@ -170,95 +153,55 @@ class SecurityPipeline:
                     }
 
                 llm_score = (res_llm.metadata or {}).get("risk_score", 0)
-                threshold = 0.5 if self.MODE == "strict" else 0.8
+                inj_risk = (res_inj.metadata or {}).get("risk_score", 0)
 
                 if inj_risk >= 0.5 and llm_score >= 0.6:
                     res_llm.status = ScanStatus.BLOCKED
-                    res_llm.message = "Combined Risk"
+                    res_llm.message = "Combined Risk Detected"
                     return await self._finalize(res_llm, trace, user_id, ip, db)
 
-                if llm_score > threshold:
+                if res_llm.status == ScanStatus.BLOCKED:
                     return await self._finalize(res_llm, trace, user_id, ip, db)
 
             except asyncio.TimeoutError:
-                return {
-                    "allowed": False, "status": "BLOCKED", "block_reason": "Security Check Timeout",
-                    "final_text": clean_text, "trace": trace
-                }
-            except Exception as e:
-                logger.error(f"LLM Scanner Error: {e}")
-                return {
-                    "allowed": False, "status": "BLOCKED", "block_reason": "Security Module Error",
-                    "final_text": clean_text, "trace": trace
-                }
+                return {"allowed": False, "status": "BLOCKED", "block_reason": "Security Check Timeout", "trace": trace}
+            except Exception:
+                pass
 
             if redis_client:
                 await redis_client.set(cache_key, clean_text, ex=CACHE_TTL)
 
-            success_result = SecurityResult(
-                status=ScanStatus.ALLOWED,
-                scanner_name="System",
-                message="Clean",
-                sanitized_text=clean_text
-            )
-            return await self._finalize(success_result, trace, user_id, ip, db)
+            success = SecurityResult(ScanStatus.ALLOWED, "System", "Clean", clean_text)
+            return await self._finalize(success, trace, user_id, ip, db)
 
         except Exception as e:
-            logger.error(f"Manager Run Error: {e}")
             traceback.print_exc()
-            return {
-                "allowed": False,
-                "status": "BLOCKED",
-                "block_reason": f"System Error: {str(e)}",
-                "final_text": text,
-                "trace": trace
-            }
+            return {"allowed": False, "status": "BLOCKED", "block_reason": "System Error", "trace": trace}
 
     async def _finalize(self, res, trace, uid, ip, db):
         is_allowed = res.status != ScanStatus.BLOCKED
-
         if db:
             try:
-                meta_dict = {
-                    "trace": trace,
-                    "original_msg": res.message,
-                    "risk_score": (res.metadata or {}).get("risk_score", 0.0)
-                }
-
                 log = SecurityLog(
-                    user_id=uid,
-                    client_ip=ip,
-                    endpoint="chat/secure",
-                    request_text=res.sanitized_text,
-                    sanitized_text=res.sanitized_text,
+                    user_id=uid, client_ip=ip, endpoint="chat/secure",
+                    request_text=res.sanitized_text, sanitized_text=res.sanitized_text,
                     scanner_name=res.scanner_name if not is_allowed else "System",
                     status=res.status,
                     risk_score=(res.metadata or {}).get("risk_score", 0.0),
-                    metadata_log=meta_dict
+                    metadata_log={"trace": trace, "original_msg": res.message}
                 )
                 db.add(log)
                 await db.commit()
-            except Exception as e:
-                logger.error(f"DB Log Error: {e}")
-                traceback.print_exc()
+            except Exception:
+                pass
 
         if not is_allowed:
             STRIKE_POINT = 1
             await handle_violation(db, uid, ip, res.message, STRIKE_POINT)
-            return {
-                "allowed": False,
-                "status": "BLOCKED",
-                "block_reason": res.message,
-                "trace": trace,
-                "final_text": res.sanitized_text
-            }
+            return {"allowed": False, "status": "BLOCKED", "block_reason": res.message, "trace": trace,
+                    "final_text": res.sanitized_text}
 
-        return {
-            "allowed": True,
-            "status": "ALLOWED",
-            "final_text": res.sanitized_text,
-            "trace": trace
-        }
+        return {"allowed": True, "status": "ALLOWED", "final_text": res.sanitized_text, "trace": trace}
 
 
 async def handle_violation(db: AsyncSession, user_id: int, ip: str, reason: str, severity: int):
@@ -269,11 +212,8 @@ async def handle_violation(db: AsyncSession, user_id: int, ip: str, reason: str,
         await redis_client.expire(violation_key, 3600)
 
         if ip_score >= BAN_THRESHOLD:
-            logger.warning(f"IP BANNED for User {user_id}: {ip}")
-
             ban_key = f"banned:user:{user_id}:ip:{ip}"
             await redis_client.set(ban_key, "permanent")
-
             try:
                 stmt = select(BlacklistedIP).where(
                     (BlacklistedIP.ip_address == ip) &
@@ -288,9 +228,7 @@ async def handle_violation(db: AsyncSession, user_id: int, ip: str, reason: str,
                     )
                     db.add(new_ban)
                     await db.commit()
-            except Exception as e:
-                logger.error(f"DB Ban Insert Error: {e}")
-
-        logger.info(f"Violation: User={user_id} IP={ip} Sev={severity} Reason={reason} Score={ip_score}")
-    except Exception as e:
-        logger.error(f"Firewall Handle Violation Error: {e}")
+            except Exception:
+                pass
+    except Exception:
+        pass

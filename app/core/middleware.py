@@ -46,7 +46,6 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 
                     if user:
                         request.state.user = user
-                        identifier = f"user:{user.id}"
 
                         if redis_client:
                             user_ban_key = f"banned:user:{user.id}"

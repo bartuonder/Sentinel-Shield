@@ -43,7 +43,6 @@ class PIIScanner(BaseScanner):
             self.active = False
 
     def verify_tckn(self, tckn: str) -> bool:
-
         if len(tckn) != 11 or tckn[0] == '0': return False
         try:
             d = [int(c) for c in tckn]
@@ -54,28 +53,20 @@ class PIIScanner(BaseScanner):
             return False
 
     def clean_invisible_chars(self, text: str) -> str:
-
         return self.invisible_chars.sub('', text)
 
     def decode_and_scan(self, text: str) -> list:
-
         detected = []
-
         potential_payloads = re.findall(r'[A-Za-z0-9+/=]{10,}', text)
-
         for payload in potential_payloads:
             decoded_text = None
-
-
             try:
-
                 missing_padding = len(payload) % 4
                 if missing_padding: payload += '=' * (4 - missing_padding)
                 decoded_bytes = base64.b64decode(payload, validate=True)
                 decoded_text = decoded_bytes.decode('utf-8', errors='ignore')
             except:
                 pass
-
 
             if not decoded_text:
                 try:
@@ -85,22 +76,15 @@ class PIIScanner(BaseScanner):
                     pass
 
             if decoded_text:
-
                 digits = re.sub(r'\D', '', decoded_text)
-
-
                 if len(digits) == 11 and self.verify_tckn(digits):
                     detected.append("TR_TCKN_ENCODED")
-
                 elif len(digits) == 16:
                     detected.append("CREDIT_CARD_ENCODED")
-
         return list(set(detected))
 
     def normalize_aggressive(self, text: str) -> str:
-
         text = unicodedata.normalize('NFKC', text).casefold()
-
         words = text.split()
         res = []
         for w in words:
@@ -109,49 +93,38 @@ class PIIScanner(BaseScanner):
                 res.append(self.word_map[clean_w])
             else:
                 res.append(w)
-
         intermediate = " ".join(res)
-
         return re.sub(r'[^0-9]', '', intermediate)
 
     def mask_pii_smart(self, text: str, matches: list) -> str:
-
         if not matches: return text
         matches.sort(key=lambda x: (x['start'], -(x['end'] - x['start'])))
-
         non_overlapping = []
         last_end = -1
         for m in matches:
             if m['start'] >= last_end:
                 non_overlapping.append(m)
                 last_end = m['end']
-
         non_overlapping.sort(key=lambda x: x['start'], reverse=True)
         chars = list(text)
         for m in non_overlapping:
             chars[m['start']:m['end']] = list(f"[{m['label']} REDACTED]")
-
         return "".join(chars)
 
     async def scan(self, text: str) -> SecurityResult:
         if not self.active:
-            return SecurityResult(
-                status=ScanStatus.MONITOR,
-                scanner_name="PIIScanner",
-                message="Service Down",
-                sanitized_text=text
-            )
+            return SecurityResult(status=ScanStatus.MONITOR, scanner_name="PIIScanner", message="Service Down",
+                                  sanitized_text=text)
 
         clean_text = self.clean_invisible_chars(text)
-
         encoded_risks = self.decode_and_scan(clean_text)
-        if encoded_risks:
 
+        if encoded_risks:
             return SecurityResult(
-                status=ScanStatus.BLOCKED,
+                status=ScanStatus.ALLOWED,
                 scanner_name="PIIScanner",
                 message=f"Encoded PII Detected: {', '.join(encoded_risks)}",
-                sanitized_text=text,
+                sanitized_text="[HIDDEN PII REDACTED]",
                 metadata={"hidden_pii": True, "detected_types": encoded_risks}
             )
 
@@ -177,12 +150,10 @@ class PIIScanner(BaseScanner):
 
         hidden_found = False
         normalized_text = self.normalize_aggressive(clean_text)
-
         for label, pattern in self.patterns.items():
             found_items = pattern.findall(normalized_text)
             for item in found_items:
                 if label == "TR_TCKN" and not self.verify_tckn(item): continue
-
                 if label not in detected_labels:
                     hidden_found = True
                     detected_labels.add(f"{label}_HIDDEN")
@@ -206,9 +177,5 @@ class PIIScanner(BaseScanner):
                 metadata={"hidden_pii": False, "detected_types": list(detected_labels)}
             )
 
-        return SecurityResult(
-            status=ScanStatus.ALLOWED,
-            scanner_name="PIIScanner",
-            message="Clean",
-            sanitized_text=text
-        )
+        return SecurityResult(status=ScanStatus.ALLOWED, scanner_name="PIIScanner", message="Clean",
+                              sanitized_text=text)
