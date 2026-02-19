@@ -19,9 +19,10 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger("Manager")
 
 MAX_CONTEXT_LEN = 1000
-LLM_TIMEOUT = 4.0
+LLM_TIMEOUT = 10.0
 BAN_THRESHOLD = 5
 CACHE_TTL = 86400
+
 
 class SecurityPipeline:
     def __init__(self):
@@ -29,12 +30,12 @@ class SecurityPipeline:
         self.pii = PIIScanner()
         self.injection = InjectionScanner()
         self.llm = LLMGuardScanner()
-        self.PIPELINE_VERSION = "v15_FINAL_FIX"
+        self.PIPELINE_VERSION = "v17_ABSOLUTE_FINAL"
         self.MODE = "strict"
 
     def _generate_cache_key(self, text: str) -> str:
-        clean_text = text.strip().lower()
-        hash_object = hashlib.sha256(clean_text.encode())
+        clean_text = text.strip()
+        hash_object = hashlib.md5(clean_text.encode('utf-8'))
         return f"cache:response:{hash_object.hexdigest()}"
 
     async def check_rate_limits(self, user_id: int, ip: str) -> bool:
@@ -85,17 +86,16 @@ class SecurityPipeline:
 
                 cache_key = self._generate_cache_key(text)
                 cached_response = await redis_client.get(cache_key)
-                
+
                 if cached_response:
                     trace.append({"scanner": "RedisCache", "status": "HIT", "risk": 0.0})
-                    
                     if isinstance(cached_response, bytes):
                         cached_response = cached_response.decode('utf-8')
-                        
+
                     cache_res = SecurityResult(
-                        status=ScanStatus.ALLOWED, 
-                        scanner_name="RedisCache", 
-                        message="Clean (Cache Hit)", 
+                        status=ScanStatus.ALLOWED,
+                        scanner_name="RedisCache",
+                        message="Clean (Cache Hit)",
                         sanitized_text=cached_response
                     )
                     return await self._finalize(cache_res, trace, user_id, ip, db)
@@ -112,9 +112,7 @@ class SecurityPipeline:
             if res_val.status == ScanStatus.BLOCKED:
                 return await self._finalize(res_val, trace, user_id, ip, db)
 
-            clean_text = res_val.sanitized_text
-
-            res_pii = await self.pii.scan(clean_text)
+            res_pii = await self.pii.scan(text)
             trace.append(self._safe_log_dict(res_pii))
 
             clean_text = res_pii.sanitized_text
@@ -156,9 +154,9 @@ class SecurityPipeline:
                 await redis_client.set(cache_key, clean_text, ex=CACHE_TTL)
 
             success = SecurityResult(
-                status=ScanStatus.ALLOWED, 
-                scanner_name="System", 
-                message="Clean", 
+                status=ScanStatus.ALLOWED,
+                scanner_name="System",
+                message="Clean",
                 sanitized_text=clean_text
             )
             return await self._finalize(success, trace, user_id, ip, db)
