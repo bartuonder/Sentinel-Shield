@@ -55,15 +55,18 @@ class PIIScanner(BaseScanner):
     def clean_invisible_chars(self, text: str) -> str:
         return self.invisible_chars.sub('', text)
 
-    def decode_and_scan(self, text: str) -> list:
-        detected = []
+    def decode_and_scan(self, text: str) -> dict:
+        detected_risks = []
+        sanitized_text = text
+
         potential_payloads = re.findall(r'[A-Za-z0-9+/=]{10,}', text)
+
         for payload in potential_payloads:
             decoded_text = None
             try:
                 missing_padding = len(payload) % 4
-                if missing_padding: payload += '=' * (4 - missing_padding)
-                decoded_bytes = base64.b64decode(payload, validate=True)
+                padded_payload = payload + '=' * (4 - missing_padding) if missing_padding else payload
+                decoded_bytes = base64.b64decode(padded_payload, validate=True)
                 decoded_text = decoded_bytes.decode('utf-8', errors='ignore')
             except:
                 pass
@@ -77,11 +80,19 @@ class PIIScanner(BaseScanner):
 
             if decoded_text:
                 digits = re.sub(r'\D', '', decoded_text)
+                risk_found = False
+
                 if len(digits) == 11 and self.verify_tckn(digits):
-                    detected.append("TR_TCKN_ENCODED")
+                    detected_risks.append("TR_TCKN_ENCODED")
+                    risk_found = True
                 elif len(digits) == 16:
-                    detected.append("CREDIT_CARD_ENCODED")
-        return list(set(detected))
+                    detected_risks.append("CREDIT_CARD_ENCODED")
+                    risk_found = True
+
+                if risk_found:
+                    sanitized_text = sanitized_text.replace(payload, "[ENCODED PII REDACTED]")
+
+        return {"risks": list(set(detected_risks)), "sanitized_text": sanitized_text}
 
     def normalize_aggressive(self, text: str) -> str:
         text = unicodedata.normalize('NFKC', text).casefold()
@@ -117,39 +128,34 @@ class PIIScanner(BaseScanner):
                                   sanitized_text=text)
 
         clean_text = self.clean_invisible_chars(text)
-        encoded_risks = self.decode_and_scan(clean_text)
 
-        if encoded_risks:
-            return SecurityResult(
-                status=ScanStatus.ALLOWED,
-                scanner_name="PIIScanner",
-                message=f"Encoded PII Detected: {', '.join(encoded_risks)}",
-                sanitized_text="[HIDDEN PII REDACTED]",
-                metadata={"hidden_pii": True, "detected_types": encoded_risks}
-            )
+        encoded_result = self.decode_and_scan(clean_text)
+        encoded_risks = encoded_result["risks"]
+
+        current_text = encoded_result["sanitized_text"] if encoded_risks else clean_text
 
         detected_matches = []
         detected_labels = set()
 
         for label, pattern in self.patterns.items():
-            for match in pattern.finditer(clean_text):
+            for match in pattern.finditer(current_text):
                 val = match.group()
                 if label == "TR_TCKN" and not self.verify_tckn(val.replace(" ", "")): continue
                 detected_matches.append({'start': match.start(), 'end': match.end(), 'label': label})
                 detected_labels.add(label)
 
         try:
-            results = self.analyzer.analyze(text=clean_text, entities=["EMAIL_ADDRESS", "IP_ADDRESS"], language='en')
+            results = self.analyzer.analyze(text=current_text, entities=["EMAIL_ADDRESS", "IP_ADDRESS"], language='en')
             for res in results:
                 detected_matches.append({'start': res.start, 'end': res.end, 'label': "GLOBAL_PII"})
                 detected_labels.add("GLOBAL_PII")
         except:
             pass
 
-        sanitized_original = self.mask_pii_smart(clean_text, detected_matches)
+        sanitized_original = self.mask_pii_smart(current_text, detected_matches)
 
         hidden_found = False
-        normalized_text = self.normalize_aggressive(clean_text)
+        normalized_text = self.normalize_aggressive(current_text)
         for label, pattern in self.patterns.items():
             found_items = pattern.findall(normalized_text)
             for item in found_items:
@@ -158,6 +164,16 @@ class PIIScanner(BaseScanner):
                     hidden_found = True
                     detected_labels.add(f"{label}_HIDDEN")
                     normalized_text = normalized_text.replace(item, f"[{label} REDACTED]")
+
+        if encoded_risks:
+            all_labels = list(set(encoded_risks + list(detected_labels)))
+            return SecurityResult(
+                status=ScanStatus.ALLOWED,
+                scanner_name="PIIScanner",
+                message=f"PII Detected (Included Encoded): {', '.join(all_labels)}",
+                sanitized_text=sanitized_original,
+                metadata={"hidden_pii": True, "detected_types": all_labels}
+            )
 
         if hidden_found:
             return SecurityResult(

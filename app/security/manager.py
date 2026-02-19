@@ -23,14 +23,13 @@ LLM_TIMEOUT = 4.0
 BAN_THRESHOLD = 5
 CACHE_TTL = 86400
 
-
 class SecurityPipeline:
     def __init__(self):
         self.validator = InputValidator()
         self.pii = PIIScanner()
         self.injection = InjectionScanner()
         self.llm = LLMGuardScanner()
-        self.PIPELINE_VERSION = "v13_FINAL"
+        self.PIPELINE_VERSION = "v15_FINAL_FIX"
         self.MODE = "strict"
 
     def _generate_cache_key(self, text: str) -> str:
@@ -42,12 +41,10 @@ class SecurityPipeline:
         if not redis_client: return True
         try:
             ip_key = f"ratelimit:manager:ip:{ip}"
-
             pipe = redis_client.pipeline()
             pipe.incr(ip_key)
             pipe.expire(ip_key, 60)
             results = await pipe.execute()
-
             if results[0] > 1000: return False
         except Exception:
             return True
@@ -60,30 +57,12 @@ class SecurityPipeline:
             last_msg = await redis_client.get(context_key)
             await redis_client.set(context_key, current_text[-MAX_CONTEXT_LEN:], ex=300)
             if last_msg:
+                if isinstance(last_msg, bytes):
+                    last_msg = last_msg.decode('utf-8')
                 return f"{last_msg[-MAX_CONTEXT_LEN:]}\n{current_text}"
         except Exception:
             pass
         return current_text
-
-    def _decode_aggressive(self, text: str) -> str:
-        if not text: return ""
-        processed_text = text
-        try:
-            potential_matches = set(re.findall(r'[A-Za-z0-9+/=]{8,}', text))
-            for encoded in potential_matches:
-                try:
-                    missing_padding = len(encoded) % 4
-                    if missing_padding:
-                        encoded += '=' * (4 - missing_padding)
-                    decoded_bytes = base64.b64decode(encoded, validate=True)
-                    decoded_str = decoded_bytes.decode('utf-8')
-                    if decoded_str.isprintable() and len(decoded_str) > 3:
-                        processed_text = processed_text.replace(encoded, decoded_str)
-                except Exception:
-                    continue
-        except Exception:
-            pass
-        return processed_text
 
     def _safe_log_dict(self, res):
         return {
@@ -106,13 +85,20 @@ class SecurityPipeline:
 
                 cache_key = self._generate_cache_key(text)
                 cached_response = await redis_client.get(cache_key)
+                
                 if cached_response:
-                    return {
-                        "allowed": True,
-                        "status": "ALLOWED",
-                        "final_text": cached_response,
-                        "trace": [{"scanner": "Cache", "status": "HIT", "risk": 0.0}]
-                    }
+                    trace.append({"scanner": "RedisCache", "status": "HIT", "risk": 0.0})
+                    
+                    if isinstance(cached_response, bytes):
+                        cached_response = cached_response.decode('utf-8')
+                        
+                    cache_res = SecurityResult(
+                        status=ScanStatus.ALLOWED, 
+                        scanner_name="RedisCache", 
+                        message="Clean (Cache Hit)", 
+                        sanitized_text=cached_response
+                    )
+                    return await self._finalize(cache_res, trace, user_id, ip, db)
 
             if not await self.check_rate_limits(user_id, ip):
                 return {
@@ -121,9 +107,7 @@ class SecurityPipeline:
                     "final_text": text, "trace": []
                 }
 
-            decoded_text = self._decode_aggressive(text)
-
-            res_val = await self.validator.scan(decoded_text)
+            res_val = await self.validator.scan(text)
             trace.append(self._safe_log_dict(res_val))
             if res_val.status == ScanStatus.BLOCKED:
                 return await self._finalize(res_val, trace, user_id, ip, db)
@@ -171,7 +155,12 @@ class SecurityPipeline:
             if redis_client:
                 await redis_client.set(cache_key, clean_text, ex=CACHE_TTL)
 
-            success = SecurityResult(ScanStatus.ALLOWED, "System", "Clean", clean_text)
+            success = SecurityResult(
+                status=ScanStatus.ALLOWED, 
+                scanner_name="System", 
+                message="Clean", 
+                sanitized_text=clean_text
+            )
             return await self._finalize(success, trace, user_id, ip, db)
 
         except Exception as e:

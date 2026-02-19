@@ -5,7 +5,6 @@ import base64
 import binascii
 from app.security.base import BaseScanner, SecurityResult, ScanStatus
 
-
 class InjectionScanner(BaseScanner):
     def __init__(self):
         self.hard_signatures = re.compile(
@@ -13,7 +12,8 @@ class InjectionScanner(BaseScanner):
             r"(\b(union\s+all\s+select|union\s+select|information_schema)\b)|"
             r"(\b(or|and)\s+[\d']+\s*=\s*[\d']+\b)|"
             r"(\b(or|and)\s+[\d']+\s*like\s*[\d']+\b)|"
-            r"(;.*?\b(wget|curl|nc|netcat|whoami|reboot|chmod|cat /etc/passwd)\b))",
+            r"(;.*?\b(wget|curl|nc|netcat|whoami|reboot|chmod|cat /etc/passwd)\b)|"
+            r"(<script\b[^>]*>|javascript:|onerror\s*=|onload\s*=|eval\(|document\.cookie|<iframe\b[^>]*>))",
             re.IGNORECASE
         )
 
@@ -36,11 +36,14 @@ class InjectionScanner(BaseScanner):
             "having": 0.2, "like": 0.1, "--": 0.2, "#": 0.2, "version": 0.1
         }
 
-        self.skeleton_keywords = ["unionselect", "insertinto", "droptable", "scriptalert", "xp_cmdshell", "or1=1",
-                                  "or1like1"]
+        self.skeleton_keywords = [
+            "unionselect", "insertinto", "droptable", "scriptalert",
+            "onerroralert", "documentcookie", "xp_cmdshell", "or1=1", "or1like1"
+        ]
 
         self.leetspeak_map = str.maketrans(
-            {'1': 'i', '0': 'o', '5': 's', '7': 't', '3': 'e', '4': 'a', '@': 'a', '$': 's'})
+            {'1': 'i', '0': 'o', '5': 's', '7': 't', '3': 'e', '4': 'a', '@': 'a', '$': 's'}
+        )
 
         self.invisible_chars = re.compile(r'[\u200b-\u200f\u202a-\u202e\ufeff\u2060-\u2064]')
 
@@ -116,7 +119,7 @@ class InjectionScanner(BaseScanner):
             return SecurityResult(
                 status=ScanStatus.BLOCKED,
                 scanner_name="InjectionScanner",
-                message="Critical Attack Signature Detected",
+                message="Critical Attack Signature Detected (SQL/XSS)",
                 sanitized_text=text,
                 metadata={"risk_score": 1.0, "type": "HARD_SIGNATURE"}
             )
