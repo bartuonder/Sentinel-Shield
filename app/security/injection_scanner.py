@@ -64,9 +64,8 @@ class InjectionScanner(BaseScanner):
         for payload in potential_payloads:
             decoded_text = None
             try:
-                missing_padding = len(payload) % 4
-                if missing_padding: payload += '=' * (4 - missing_padding)
-                decoded_text = base64.b64decode(payload, validate=True).decode('utf-8', errors='ignore')
+                padded = payload + "=" * ((4 - len(payload) % 4) % 4)
+                decoded_text = base64.b64decode(padded).decode('utf-8', errors='ignore')
             except:
                 pass
 
@@ -76,10 +75,16 @@ class InjectionScanner(BaseScanner):
                 except:
                     pass
 
-            if decoded_text:
+            if decoded_text and len(decoded_text.strip()) > 3:
                 clean_decoded = self.sanitize_payload(decoded_text)
                 if self.hard_signatures.search(clean_decoded):
-                    detected_attacks.append("ENCODED_PAYLOAD_DETECTED")
+                    detected_attacks.append("ENCODED_HARD_SIGNATURE")
+                elif self.calculate_heuristic_score(clean_decoded) >= 0.6:
+                    detected_attacks.append("ENCODED_HEURISTIC_RISK")
+                else:
+                    skeleton = self.get_skeleton(clean_decoded)
+                    if any(kw in skeleton for kw in self.skeleton_keywords):
+                        detected_attacks.append("ENCODED_OBFUSCATION")
 
         return list(set(detected_attacks))
 
@@ -105,14 +110,14 @@ class InjectionScanner(BaseScanner):
         scan_text = self.sanitize_payload(text)
         risks = []
 
-        encoded_attacks = self.decode_and_check(scan_text)
+        encoded_attacks = self.decode_and_check(text)
         if encoded_attacks:
             return SecurityResult(
                 status=ScanStatus.BLOCKED,
                 scanner_name="InjectionScanner",
                 message="Critical Encoded Attack Detected",
                 sanitized_text=text,
-                metadata={"risk_score": 1.0, "type": "ENCODED_INJECTION"}
+                metadata={"risk_score": 1.0, "type": "ENCODED_INJECTION", "flags": encoded_attacks}
             )
 
         if self.hard_signatures.search(scan_text):

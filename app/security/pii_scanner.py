@@ -10,7 +10,6 @@ from presidio_anonymizer import AnonymizerEngine
 
 logger = logging.getLogger("PIIScanner")
 
-
 class PIIScanner(BaseScanner):
     def __init__(self):
         try:
@@ -19,21 +18,12 @@ class PIIScanner(BaseScanner):
             self.anonymizer = AnonymizerEngine()
             self.active = True
 
-            self.word_map = {
-                'sıfır': '0', 'bir': '1', 'iki': '2', 'üç': '3', 'dört': '4',
-                'beş': '5', 'altı': '6', 'yedi': '7', 'sekiz': '8', 'dokuz': '9',
-                'on': '1', 'yirmi': '2', 'otuz': '3', 'kırk': '4', 'elli': '5',
-                'altmış': '6', 'yetmiş': '7', 'seksen': '8', 'doksan': '9',
-                'yüz': '', 'bin': '', 'milyon': '', 'milyar': '',
-                'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
-                'six': '6', 'seven': '7', 'eight': '8', 'nine': '9'
-            }
-
             self.patterns = {
-                "TR_TCKN": re.compile(r"\b[1-9]\d{10}\b"),
-                "TR_PHONE": re.compile(r"(?:\+90|0)?\s*5\d{2}\s*\d{3}\s*\d{2}\s*\d{2}"),
-                "TR_IBAN": re.compile(r"TR\d{2}\s?(\d{4}\s?){6}"),
-                "CREDIT_CARD": re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\s?\d{4}\b")
+                "TR_TCKN": re.compile(r"(?<!\d)[1-9]\d{10}(?!\d)"),
+                "TR_PHONE": re.compile(r"(?<!\d)(?:\+90\s*|0\s*)?5\d{2}[\s]*\d{3}[\s]*\d{2}[\s]*\d{2}(?!\d)"),
+                "TR_IBAN": re.compile(r"(?i)TR\d{2}(?:[\s]*\d){16,28}(?!\d)"),
+                "CREDIT_CARD": re.compile(r"(?<!\d)\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}(?!\d)"),
+                "VERBAL_PII": re.compile(r"(?i)(?:(?:s[ıi]f[ıi]r|bir|iki|[üu][çc]|d[öo]rt|be[şs]|alt[ıi]|yedi|sekiz|dokuz|on|yirmi|otuz|k[ıi]rk|elli|altm[ıi][şs]|yetmi[şs]|seksen|doksan|y[üu]z|bin|zero|one|two|three|four|five|six|seven|eight|nine)[\s,.-]+){7,}(?:s[ıi]f[ıi]r|bir|iki|[üu][çc]|d[öo]rt|be[şs]|alt[ıi]|yedi|sekiz|dokuz|on|yirmi|otuz|k[ıi]rk|elli|altm[ıi][şs]|yetmi[şs]|seksen|doksan|y[üu]z|bin|zero|one|two|three|four|five|six|seven|eight|nine)")
             }
 
             self.invisible_chars = re.compile(r'[\u200b-\u200f\u202a-\u202e\ufeff\u2060-\u2064]')
@@ -64,8 +54,7 @@ class PIIScanner(BaseScanner):
         for payload in potential_payloads:
             decoded_text = None
             try:
-                missing_padding = len(payload) % 4
-                padded_payload = payload + '=' * (4 - missing_padding) if missing_padding else payload
+                padded_payload = payload + '=' * ((4 - len(payload) % 4) % 4)
                 decoded_bytes = base64.b64decode(padded_payload, validate=True)
                 decoded_text = decoded_bytes.decode('utf-8', errors='ignore')
             except:
@@ -93,19 +82,6 @@ class PIIScanner(BaseScanner):
                     sanitized_text = sanitized_text.replace(payload, "[ENCODED PII REDACTED]")
 
         return {"risks": list(set(detected_risks)), "sanitized_text": sanitized_text}
-
-    def normalize_aggressive(self, text: str) -> str:
-        text = unicodedata.normalize('NFKC', text).casefold()
-        words = text.split()
-        res = []
-        for w in words:
-            clean_w = re.sub(r'[^\w]', '', w)
-            if clean_w in self.word_map:
-                res.append(self.word_map[clean_w])
-            else:
-                res.append(w)
-        intermediate = " ".join(res)
-        return re.sub(r'[^0-9]', '', intermediate)
 
     def mask_pii_smart(self, text: str, matches: list) -> str:
         if not matches: return text
@@ -154,17 +130,6 @@ class PIIScanner(BaseScanner):
 
         sanitized_original = self.mask_pii_smart(current_text, detected_matches)
 
-        hidden_found = False
-        normalized_text = self.normalize_aggressive(current_text)
-        for label, pattern in self.patterns.items():
-            found_items = pattern.findall(normalized_text)
-            for item in found_items:
-                if label == "TR_TCKN" and not self.verify_tckn(item): continue
-                if label not in detected_labels:
-                    hidden_found = True
-                    detected_labels.add(f"{label}_HIDDEN")
-                    normalized_text = normalized_text.replace(item, f"[{label} REDACTED]")
-
         if encoded_risks:
             all_labels = list(set(encoded_risks + list(detected_labels)))
             return SecurityResult(
@@ -172,16 +137,7 @@ class PIIScanner(BaseScanner):
                 scanner_name="PIIScanner",
                 message=f"PII Detected (Included Encoded): {', '.join(all_labels)}",
                 sanitized_text=sanitized_original,
-                metadata={"hidden_pii": True, "detected_types": all_labels}
-            )
-
-        if hidden_found:
-            return SecurityResult(
-                status=ScanStatus.ALLOWED,
-                scanner_name="PIIScanner",
-                message=f"Hidden PII Detected: {', '.join(detected_labels)}",
-                sanitized_text=normalized_text,
-                metadata={"hidden_pii": True, "detected_types": list(detected_labels)}
+                metadata={"detected_types": all_labels}
             )
 
         if detected_labels:
@@ -190,7 +146,7 @@ class PIIScanner(BaseScanner):
                 scanner_name="PIIScanner",
                 message=f"PII Detected: {', '.join(detected_labels)}",
                 sanitized_text=sanitized_original,
-                metadata={"hidden_pii": False, "detected_types": list(detected_labels)}
+                metadata={"detected_types": list(detected_labels)}
             )
 
         return SecurityResult(status=ScanStatus.ALLOWED, scanner_name="PIIScanner", message="Clean",

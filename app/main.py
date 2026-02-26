@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
         count = 0
         if redis_client:
             for ban in banned_ips:
-                redis_key = f"banned:{ban.user_id}:{ban.ip_address}"
+                redis_key = f"banned:user:{ban.user_id}:ip:{ban.ip_address}"
                 reason = ban.reason or "Permanent Ban"
 
                 await redis_client.set(redis_key, reason)

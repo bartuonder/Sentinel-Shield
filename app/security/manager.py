@@ -23,14 +23,13 @@ LLM_TIMEOUT = 10.0
 BAN_THRESHOLD = 5
 CACHE_TTL = 86400
 
-
 class SecurityPipeline:
     def __init__(self):
         self.validator = InputValidator()
         self.pii = PIIScanner()
         self.injection = InjectionScanner()
         self.llm = LLMGuardScanner()
-        self.PIPELINE_VERSION = "v17_ABSOLUTE_FINAL"
+        self.PIPELINE_VERSION = "v18_NO_BLEEDING"
         self.MODE = "strict"
 
     def _generate_cache_key(self, text: str) -> str:
@@ -121,12 +120,16 @@ class SecurityPipeline:
             res_inj = await self.injection.scan(combined_text)
             trace.append(self._safe_log_dict(res_inj))
 
+            res_inj.sanitized_text = clean_text
+
             if (res_inj.metadata or {}).get("risk_score", 0) >= 1.0:
                 return await self._finalize(res_inj, trace, user_id, ip, db)
 
             try:
                 res_llm = await asyncio.wait_for(self.llm.scan(clean_text), timeout=LLM_TIMEOUT)
                 trace.append(self._safe_log_dict(res_llm))
+
+                res_llm.sanitized_text = clean_text
 
                 if res_llm.status == ScanStatus.ERROR:
                     return {
@@ -189,7 +192,6 @@ class SecurityPipeline:
                     "final_text": res.sanitized_text}
 
         return {"allowed": True, "status": "ALLOWED", "final_text": res.sanitized_text, "trace": trace}
-
 
 async def handle_violation(db: AsyncSession, user_id: int, ip: str, reason: str, severity: int):
     if not redis_client: return
