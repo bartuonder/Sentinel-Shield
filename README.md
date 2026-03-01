@@ -1,52 +1,81 @@
-🛡️ Sentinel-Shield: Enterprise AI Security Gateway & SaaS Platform
+# 🛡️ Sentinel-Shield: Enterprise AI Security Gateway & SaaS Platform
 
-Sentinel-Shield, modern web uygulamaları ve Büyük Dil Modelleri (LLM) için geliştirilmiş, yüksek performanslı bir Security-as-a-Service (SaaS) çözümüdür. Geliştiriciler, platform üzerinden aldıkları API Key ile isteklerini Sentinel-Shield üzerinden geçirerek sistemlerini hem klasik siber tehditlere hem de gelişmiş AI manipülasyonlarına karşı koruma altına alırlar.
+**Sentinel-Shield**, modern web uygulamaları ve Büyük Dil Modelleri (LLM) entegrasyonları için geliştirilmiş, yüksek performanslı ve bulut tabanlı bir **Security-as-a-Service (SaaS)** çözümüdür. Geliştiriciler, platform üzerinden aldıkları API Key ile tüm trafiklerini Sentinel-Shield üzerinden geçirerek uçtan uca koruma sağlarlar.
 
-🚀 Temel Fonksiyonlar ve Güvenlik Mantığı
+---
 
-1. PII Sanitization (Veri Sızıntısı Önleme): Sistem, pii_scanner.py modülü içerisinde Microsoft Presidio (PresidioAnalyzer) kütüphanesini kullanarak istemler içindeki hassas verileri (TCKN, IBAN, Email, Telefon vb.) gerçek zamanlı olarak tespit eder. Tespit edilen veriler, hedef LLM'e ulaşmadan önce maskelenerek veri gizliliği (DLP) sağlanır.
-2. Akıllı Ban ve IP Yönetimi (5-Strike Rule): Saldırgan IP adreslerini yönetmek için hibrit bir yapı kullanılır:
-Ban Mantığı: Bir saldırgan IP, belirli bir API Key üzerinden 5 kez güvenlik kuralı ihlali yaparsa, o kullanıcı/API Key için otomatik olarak banlanır.
-Hibrit Depolama: Banlanan IP'ler, doğrulama hızı için Upstash Redis'te, geçmişe dönük analiz ve dashboard gösterimi için AWS RDS (PostgreSQL) veritabanında saklanır.
-3. Katmanlı Rate LimitingSistemin sürekliliğini korumak amacıyla iki aşamalı sınırlama uygulanır:Sistem Koruması: Backend'e yönelik aşırı yüklenmeleri engellemek için genel rate limiter devreye girer.
-Geçici Bloklama: Çok hızlı istek atarak sistemi manipüle etmeye çalışan IP'ler, Redis üzerinde kısa süreli (TTL ile) banlanarak izole edilir.
-4. Semantik Güvenlik (LLM Guard)Yapay zekayı manipüle etmeyi amaçlayan "Jailbreak" ve "Prompt Injection" saldırıları, OpenAI GPT-4o-mini kullanılarak semantik analizden geçirilir ve zararlı istemler daha işleme alınmadan engellenir.
+## 🚀 Temel Fonksiyonlar ve Güvenlik Filtreleme Mantığı
 
-🏗️ Teknoloji Yığını ve AltyapıBileşenKullanılan Teknoloji
+Sistem, gelen her istemi (request) üç temel aşamadan geçirir:
 
-Backend: FastAPI, Starlette, Pydantic(v2)
-Veritabanı (ORM): SQLAlchemy (Async) & AWS RDS PostgreSQL
-Önbellek (Cache): Upstash Redis (Cloud)
-Security Engine: Microsoft Presidio (PresidioAnalyzer)
-AI Analiz: OpenAI GPT-4o-mini
-Deployment: AWS EC2 & Docker-Compose
-Frontend: Next.js
+### 1. Tehdit Engelleme (Blocking)
+Gelen mesajlar semantik ve imza tabanlı analizlerden geçer.
+* **LLM Guard:** Yapay zekayı kandırmaya yönelik sinsi "Jailbreak" ve "Prompt Injection" denemeleri OpenAI GPT-4o-mini ile analiz edilerek anında engellenir.
+* **Klasik Enjeksiyon:** SQLi, XSS ve diğer web tabanlı saldırı vektörleri sistem tarafından tespit edildiği an istek **BLOCKED** durumuna düşürülür.
 
-🛠️ Mimari Kararlar
+### 2. Veri Anonimleştirme (PII Sanitization)
+Mesaj temizse ancak hassas veri içeriyorsa devreye girer:
+* **Microsoft Presidio:** `pii_scanner.py` modülü, hem açık hem de gizli kalmış hassas verileri (TCKN, IBAN, Email, Telefon) **PresidioAnalyzer** ile tespit eder.
+* **Maskeleme:** Tespit edilen veriler `[TR_TCKN REDACTED]` gibi etiketlerle sansürlenerek hedef LLM'e güvenli bir şekilde iletilir.
 
-Monolitik Yapı: Hızlı geliştirme ve düşük gecikme süresi (low latency) için monolitik mimari tercih edilmiştir.
-Redis Hashing: Mükerrer istekleri engellemek ve performansı artırmak için 24 saatlik sorular hashlenerel Redis üzerinde tutulur.
-JWT Yetkilendirme: Kullanıcı oturumları ve API erişimleri güvenli JWT tokenları ile yönetilir.
+### 3. Akıllı Ban ve IP Yönetimi (5-Strike Rule)
+Saldırgan IP adreslerini izole etmek için hibrit bir mantık kullanılır:
+* **Kullanıcı Bazlı Ban:** Bir IP adresi, belirli bir API Key üzerinden **5 kez** kural ihlali yaparsa, o kullanıcı için kalıcı olarak banlanır.
+* **Sistem Koruma (Rate Limiter):** Kendi backend altyapımızı korumak için, çok yüksek frekansta istek atan IP'ler Redis üzerinde kısa süreli (TTL bazlı) bloklanarak sistem yükü dengelenir.
 
-⚙️ Kurulum (Local & Cloud)
-Ana dizinde bir .env dosyası oluşturun ve aşağıdaki şablonu doldurun:
-# OpenAI API Settings
+---
+
+## 🏗️ Mimari ve Cloud Altyapısı
+
+
+
+### Cloud Katmanı
+* **Hosting:** **AWS EC2** üzerinde Dockerize edilmiş mimari.
+* **Giriş Katmanı:** **Nginx** ters proxy (Reverse Proxy) olarak konumlandırılmıştır.
+* **Veritabanı:** **AWS RDS (PostgreSQL)** kalıcı loglar ve kullanıcı verileri için kullanılır.
+* **Güvenlik Protokolü:** EC2 ve RDS arasındaki veri trafiği, en düşük yetki ilkesine dayalı **AWS Security Groups** ile izole edilmiştir.
+
+### Veri ve Cache Stratejisi (Upstash Redis)
+Redis üzerinde performans için 3 temel veri tipi tutulur:
+1.  **Rate Limit Verisi:** Backend'i aşırı yükten korumak için IP bazlı sayaçlar.
+2.  **Ban Status:** Hız optimizasyonu için banlı IP'lerin sorgulanması Redis üzerinden yapılır.
+3.  **Hashed Queries:** Performansı artırmak ve mükerrer istek maliyetini düşürmek için 24 saatlik sorular hashlenerel saklanır.
+
+---
+
+## 🛠️ Teknoloji Yığını
+
+* **Backend:** FastAPI, Starlette, Pydantic (v2), SQLAlchemy (Async).
+* **Frontend:** Next.js (Dashboard & Auth Management).
+* **Veri Güvenliği:** Microsoft Presidio Analyzer.
+* **Authentication:** JWT (Stateless Auth).
+* **Altyapı:** Docker & Docker-Compose.
+
+---
+
+## ⚙️ Kurulum (Configuration)
+
+Ana dizinde bir `.env` dosyası oluşturun ve aşağıdaki şablonu kendi cloud bilgilerinizle doldurun:
+
+```env
+
+OpenAI API Settings:
 API_KEY=your_openai_api_key
 
-# JWT & Core Security
-SECRET_KEY=yüksek_güvenlikli_karmaşık_bir_string_girin
+JWT & Core Security:
+SECRET_KEY=kendi_guvenli_anahtariniz
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 
-# Cloud Infrastructure (AWS & Upstash)
+Cloud Infrastructure (AWS & Upstash):
 REDIS_URL=rediss://default:password@endpoint:6379
-DATABASE_URL=postgresql+asyncpg://user:pass@rds_endpoint:5432/dbname
+DATABASE_URL=postgresql+asyncpg://user:password@rds_endpoint:5432/dbname
 
-# Connection Settings
+Connection Settings:
 NEXT_PUBLIC_API_URL=http://ec2_ip_adresiniz/api/v1
 
 Docker ile Başlatma:
 docker-compose up --build -d
 
-Geliştirici: Bartu Önder - 2. Sınıf Yazılım Mühendisliği Öğrencisi
-Hedef: Backend/Software Engineering - AI Security
+Geliştirici: Bartu Önder - Software Engineering Student
+Vizyon: Backend/Software Engineering - AI Security
