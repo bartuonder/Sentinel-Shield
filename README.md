@@ -1,54 +1,52 @@
-🛡️ Sentinel-Shield: Cloud-Native AI Security Gateway
-Sentinel-Shield, modern web uygulamaları ve LLM tabanlı sistemler için geliştirilmiş, API Key yönetimli bir güvenlik katmanıdır. İstekler hedef sisteme ulaşmadan önce Sentinel-Shield üzerinden geçer; saldırılar (OWASP Top 10 & LLM Vulnerabilities) bloklanır ve hassas veriler maskelenir.
+🛡️ Sentinel-Shield: Enterprise AI Security Gateway & SaaS Platform
 
-☁️ Cloud & Altyapı Mimari
-Proje, yüksek erişilebilirlik ve ölçeklenebilirlik için tamamen bulut teknolojileri üzerine inşa edilmiştir:
+Sentinel-Shield, modern web uygulamaları ve Büyük Dil Modelleri (LLM) için geliştirilmiş, yüksek performanslı bir Security-as-a-Service (SaaS) çözümüdür. Geliştiriciler, platform üzerinden aldıkları API Key ile isteklerini Sentinel-Shield üzerinden geçirerek sistemlerini hem klasik siber tehditlere hem de gelişmiş AI manipülasyonlarına karşı koruma altına alırlar.
 
-Hosting: AWS EC2 (Dockerized Deployment)
+🚀 Temel Fonksiyonlar ve Güvenlik Mantığı
 
-Veritabanı: AWS RDS (PostgreSQL) - Kalıcı log ve kullanıcı yönetimi
+1. PII Sanitization (Veri Sızıntısı Önleme): Sistem, pii_scanner.py modülü içerisinde Microsoft Presidio (PresidioAnalyzer) kütüphanesini kullanarak istemler içindeki hassas verileri (TCKN, IBAN, Email, Telefon vb.) gerçek zamanlı olarak tespit eder. Tespit edilen veriler, hedef LLM'e ulaşmadan önce maskelenerek veri gizliliği (DLP) sağlanır.
+2. Akıllı Ban ve IP Yönetimi (5-Strike Rule): Saldırgan IP adreslerini yönetmek için hibrit bir yapı kullanılır:
+Ban Mantığı: Bir saldırgan IP, belirli bir API Key üzerinden 5 kez güvenlik kuralı ihlali yaparsa, o kullanıcı/API Key için otomatik olarak banlanır.
+Hibrit Depolama: Banlanan IP'ler, doğrulama hızı için Upstash Redis'te, geçmişe dönük analiz ve dashboard gösterimi için AWS RDS (PostgreSQL) veritabanında saklanır.
+3. Katmanlı Rate LimitingSistemin sürekliliğini korumak amacıyla iki aşamalı sınırlama uygulanır:Sistem Koruması: Backend'e yönelik aşırı yüklenmeleri engellemek için genel rate limiter devreye girer.
+Geçici Bloklama: Çok hızlı istek atarak sistemi manipüle etmeye çalışan IP'ler, Redis üzerinde kısa süreli (TTL ile) banlanarak izole edilir.
+4. Semantik Güvenlik (LLM Guard)Yapay zekayı manipüle etmeyi amaçlayan "Jailbreak" ve "Prompt Injection" saldırıları, OpenAI GPT-4o-mini kullanılarak semantik analizden geçirilir ve zararlı istemler daha işleme alınmadan engellenir.
 
-Cache & Rate Limit: Upstash Redis - Hızlı kural kontrolü ve oturum yönetimi
+🏗️ Teknoloji Yığını ve AltyapıBileşenKullanılan Teknoloji
 
-Orkestrasyon: Docker Compose (Frontend & Backend izolasyonu)
-
-🌟 Öne Çıkan Özellikler
-SaaS Model: Kullanıcılar kayıt olup kendi API anahtarlarını oluşturabilir ve projelerini saniyeler içinde korumaya başlayabilir.
-
-Tehdit Engelleme: SQL Injection, XSS ve gelişmiş Prompt Injection saldırılarını gerçek zamanlı durdurur.
-
-DLP (Veri Sızıntısı Önleme): PII Scanner modülü ile TCKN, IBAN ve email gibi verileri otomatik maskeler.
-
-Akıllı Ban Sistemi: Belirlenen eşiği aşan saldırgan IP'leri otomatik olarak Blacklist'e alır.
-
-🛠️ Teknoloji Yığını
-Backend: FastAPI, SQLAlchemy, Pydantic
-
+Backend: FastAPI, Starlette, Pydantic(v2)
+Veritabanı (ORM): SQLAlchemy (Async) & AWS RDS PostgreSQL
+Önbellek (Cache): Upstash Redis (Cloud)
+Security Engine: Microsoft Presidio (PresidioAnalyzer)
+AI Analiz: OpenAI GPT-4o-mini
+Deployment: AWS EC2 & Docker-Compose
 Frontend: Next.js
 
-Yapay Zeka: OpenAI GPT-4o-mini (Semantik Güvenlik Analizi)
+🛠️ Mimari Kararlar
 
-⚙️ Kurulum ve Yapılandırma
-Projeyi çalıştırmak için ana dizinde bir .env dosyası oluşturun ve aşağıdaki şablonu kendi bilgilerinizle doldurun:
+Monolitik Yapı: Hızlı geliştirme ve düşük gecikme süresi (low latency) için monolitik mimari tercih edilmiştir.
+Redis Hashing: Mükerrer istekleri engellemek ve performansı artırmak için 24 saatlik sorular hashlenerel Redis üzerinde tutulur.
+JWT Yetkilendirme: Kullanıcı oturumları ve API erişimleri güvenli JWT tokenları ile yönetilir.
 
-# OpenAI API Key (Semantic analysis)
-API_KEY=your_openai_api_key_here
+⚙️ Kurulum (Local & Cloud)
+Ana dizinde bir .env dosyası oluşturun ve aşağıdaki şablonu doldurun:
+# OpenAI API Settings
+API_KEY=your_openai_api_key
 
-# Security & JWT Configuration
-SECRET_KEY=your_long_random_secret_string_here
+# JWT & Core Security
+SECRET_KEY=yüksek_güvenlikli_karmaşık_bir_string_girin
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 
-# Cloud Infrastructure Connections
-REDIS_URL=rediss://default:your_password@your_upstash_endpoint:6379
-DATABASE_URL=postgresql+asyncpg://user:password@your_rds_endpoint:5432/db_name
+# Cloud Infrastructure (AWS & Upstash)
+REDIS_URL=rediss://default:password@endpoint:6379
+DATABASE_URL=postgresql+asyncpg://user:pass@rds_endpoint:5432/dbname
 
-# Frontend Connection
-NEXT_PUBLIC_API_URL=http://your_ec2_public_ip/api/v1
+# Connection Settings
+NEXT_PUBLIC_API_URL=http://ec2_ip_adresiniz/api/v1
 
-📦 Çalıştırma:
-# Docker konteynerlerini inşa eder ve arka planda çalıştırır
+Docker ile Başlatma:
 docker-compose up --build -d
 
-Geliştirici: Bartu - Yazılım Mühendisliği
-Hedef: Security Software Engineering & AI Security
+Geliştirici: Bartu Önder - 2. Sınıf Yazılım Mühendisliği Öğrencisi
+Hedef: Backend/Software Engineering - AI Security
