@@ -4,6 +4,22 @@
 
 ---
 
+## 📸 Proje Arayüzü ve Kontrol Paneli (Dashboard & Logs)
+
+<img src="images/image1.jpg" alt="Görsel 1" width="100%">
+<br><br>
+<img src="images/image2.jpg" alt="Görsel 2" width="100%">
+<br><br>
+<img src="images/image3.jpg" alt="Görsel 3" width="100%">
+<br><br>
+<img src="images/image4.jpg" alt="Görsel 4" width="100%">
+<br><br>
+<img src="images/image5.jpg" alt="Görsel 5" width="100%">
+<br><br>
+<img src="images/image6.jpg" alt="Görsel 6" width="100%">
+
+---
+
 ## 🚀 Temel Fonksiyonlar ve Güvenlik Filtreleme Mantığı
 
 Sistem, gelen her istemi (request) üç temel aşamadan geçirir:
@@ -73,9 +89,21 @@ DATABASE_URL=postgresql+asyncpg://user:password@rds_endpoint:5432/dbname
 
 Connection Settings:
 NEXT_PUBLIC_API_URL=http://ec2_ip_adresiniz/api/v1
+```
 
-Docker ile Başlatma:
+### 🐳 Docker ile Başlatma
+
+Sistemi tüm bağımlılıklarıyla birlikte ayağa kaldırmak için:
+
+```bash
 docker-compose up --build -d
+```
 
-Geliştirici: Bartu Önder - Software Engineering Student
-Vizyon: Backend/Software Engineering - AI Security
+---
+
+### 👤 Geliştirici Bilgileri
+
+* **Geliştirici:** Bartu Önder — *Software Engineering Student*
+* **🎯 Vizyon:** Software Engineering — **AI Security**
+
+---
